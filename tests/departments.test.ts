@@ -125,7 +125,7 @@ CLERK REF NO: DWYPD 01/2026
 Applications: apply to w@dwypd.gov.za`;
   const c = parseCircular(raw);
   it('merges "&" / "and" / address variants into one department', () => {
-    expect(c.departments).toEqual(['Department of Public Works and Infrastructure', 'National Treasury', 'Department of Women, Youth and Persons With Disabilities']);
+    expect(c.departments).toEqual(['Department of Public Works and Infrastructure', 'National Treasury', 'Department of Women, Youth and Persons with Disabilities']);
   });
   it('does not treat a sentence as a department heading', () => {
     expect(isDeptHeading('National Treasury Reserves the Right NOT to Fill the Below-mentioned Posts,')).toBe(false);

@@ -27,6 +27,8 @@ export interface Post {
   directorate: string;
   salary: string;
   level: string;
+  /** True when the level was worked out from the salary (other posts in the circular pair that salary with a level). */
+  levelFromSalary: boolean;
   location: string;
   closing: Date | null;
   email: string;

@@ -52,6 +52,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [dept, setDept] = useState('');
+  const [level, setLevel] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [analysis, setAnalysisState] = useState(loadAnalysis);
@@ -79,6 +80,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
   const hiddenCount = circular.posts.filter((p) => !closed(p) && !canEmail(p)).length;
   // Departments with how many posts each has (only posts that are still open and, unless shown, can be applied for by email).
   const NO_DEPT = '__none__';
+  const NO_LEVEL = 'none';
   const deptCounts = useMemo(() => {
     const m = new Map<string, { name: string; count: number }>();
     for (const p of circular.posts) {
@@ -92,10 +94,22 @@ export default function Results({ circular, cv, results, selected, setSelected, 
     return [...m.entries()].sort((a, b) => (a[0] === NO_DEPT ? 1 : b[0] === NO_DEPT ? -1 : a[1].name.localeCompare(b[1].name)));
   }, [circular, overrides, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Salary levels with how many posts each has (same posts as the department list).
+  const levelCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of circular.posts) {
+      if (closed(p) || (!showHidden && !canEmail(p))) continue;
+      const k = p.level || NO_LEVEL;
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => (a[0] === NO_LEVEL ? 1 : b[0] === NO_LEVEL ? -1 : Number(a[0]) - Number(b[0])));
+  }, [circular, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return circular.posts
       .filter((p) => (showHidden ? true : canEmail(p)))
+      .filter((p) => !level || (level === NO_LEVEL ? !p.level : p.level === level))
       .filter((p) => !dept || (dept === NO_DEPT ? !deptOf(p) : deptKey(deptOf(p)) === dept))
       .filter((p) => (filter === 'all' ? true : filter === 'selected' ? selected.has(p.id) : results[p.id].status === filter))
       .filter((p) => {
@@ -110,7 +124,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
           ? results[b.id].score - results[a.id].score
           : (a.closing?.getTime() ?? Infinity) - (b.closing?.getTime() ?? Infinity) || titleOf(a).localeCompare(titleOf(b))),
       );
-  }, [circular, q, filter, dept, showHidden, selected, results, overrides, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [circular, q, filter, dept, level, showHidden, selected, results, overrides, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string) => {
     const s = new Set(selected);
@@ -230,6 +244,16 @@ export default function Results({ circular, cv, results, selected, setSelected, 
           </select>
           {deptCounts.length === 1 && <p className="hint">Only one department was found in this circular.</p>}
         </div>
+        <div className="field">
+          <label htmlFor="levelf" className="label">Filter by salary level</label>
+          <select id="levelf" className="input" value={level} onChange={(e) => { setLevel(e.target.value); setLimit(PAGE); }}>
+            <option value="">All levels ({levelCounts.reduce((n, [, c]) => n + c, 0)} posts)</option>
+            {levelCounts.map(([k, c]) => (
+              <option key={k} value={k}>{k === NO_LEVEL ? 'Level not stated' : `Level ${k}`} ({c})</option>
+            ))}
+          </select>
+          <p className="hint">Taken from the salary line in the circular. Some posts only print a salary or a grade, so they show as “Level not stated”, or as “from salary” when other posts in this circular pair that salary with a level.</p>
+        </div>
         {hiddenCount > 0 && (
           <label className="checkline">
             <input type="checkbox" className="check" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
@@ -277,7 +301,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                   <p className="post-meta" id={`d-${p.id}`}>
                     Ref <Mark text={refOf(p)} q={q} />
                     {p.directorate && <> · {p.directorate}</>}
-                    {p.level && <> · Level {p.level}</>}
+                    {p.level && <> · Level {p.level}{p.levelFromSalary ? ' (from salary)' : ''}</>}
                     {p.location && <> · {p.location}</>}
                   </p>
                   <p className="post-meta">

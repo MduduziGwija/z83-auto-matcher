@@ -40,14 +40,28 @@ export function findDates(text: string): FoundDate[] {
 
 function readRef(after: string): string | null {
   const tok = '[A-Za-z0-9][A-Za-z0-9/\\\\\\-._]*';
-  const m = after.match(new RegExp(`^(${tok})(?:\\s+(${tok}))?`));
+  const m = after.replace(/^[\s(]+/, '').replace(/([/\-])\s+(?=[A-Za-z0-9])/g, '$1').match(new RegExp(`^(${tok})(?:\\s+(${tok}))?`));
   if (!m) return null;
   const [, a, b] = m;
   let ref: string | null = null;
   if (/\d/.test(a)) ref = a;
   else if (b && /\d/.test(b) && /^[A-Z]{2,6}$/.test(a)) ref = `${a} ${b}`;
   if (!ref) return null;
+  if (b && /^20\d{2}$/.test(b) && !/20\d{2}$/.test(ref)) ref += ' ' + b;
   return ref.replace(/[.,;:]+$/, '');
+}
+
+/** For references without digits, e.g. "REF NO: CAC", "REF NO: D – BIEA&E" or one wrapped over two lines. */
+function readRefLoose(after: string): string | null {
+  const cut = after.search(/\b(?:SALARY|CENTRE|Directorate|Branch|REQUIREMENTS?|ENQUIRIES|APPLICATIONS?|DUTIES|POST\s+\d|REF\b|Business\s+Unit|Chief\s+Directorate)|\(?\s*X\s*\d+\s*POSTS?|\bR\s?\d{1,3}\s\d{3}/i);
+  const s = (cut >= 0 ? after.slice(0, cut) : after.slice(0, 40))
+    .replace(/^[\s(:]+/, '')
+    .replace(/([-/])\s+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,;:(]+$/, '')
+    .trim();
+  if (s.length < 2 || s.length > 45 || s.split(' ').length > 6 || !/[A-Za-z0-9]/.test(s)) return null;
+  return s;
 }
 
 function readTitle(before: string, absStart: number): { title: string; start: number } {
@@ -208,11 +222,35 @@ interface Head {
   name: string;
 }
 
-const HEAD_START = /^(?:the\s+)?(?:department|ministry)\s+of\b|^office\s+of\s+the\b|^(?:the\s+)?presidency\b|^national\s+treasury\b|^provincial\s+(?:treasury|administration)\b|^public\s+service\s+commission\b|^statistics\s+south\s+africa\b|^south\s+african\s+(?:police|revenue|social|national|qualifications)\b/i;
+interface Mark {
+  pos: number;
+  name: string;
+}
+
+const HEAD_START = /^(?:the\s+)?(?:department|ministry)\s+of\b|^office\s+of\s+the\b|^(?:the\s+)?presidency\b|^national\s+treasury\b|^provincial\s+treasury\b|^public\s+service\s+commission\b|^statistics\s+south\s+africa\b|^south\s+african\s+(?:police|revenue|social|national|qualifications)\b/i;
 const NOT_HEAD = /\b(?:is|are|will|invites?|has|have|must|should|please|following|applications?|vacanc\w*|requirements?|duties|enquiries|closing|salary|centre|ref|no)\b|[0-9.:;]/i;
 // Words that make a line a sentence about the posts rather than the name of a department.
 const SENTENCE_WORDS = /\b(?:reserves?|reserved|right|fill|filling|below|above|mentioned|kindly|note|notice|posts?|advertis\w*|candidates?|applicants?|employer|equity|dispute|complaints?|read|submit\w*|attach\w*|certified|copies)\b/i;
 const ADDRESS_START = /[,;:\-–\s]*(?:private\s*bag|privatebag|p\.?\s?o\.?\s*box|postnet|physical\s+address|postal\s+address|tel\b|fax\b|e-?mail|www\.|http).*$/i;
+const SMALL_WORDS = new Set(['of', 'and', 'the', 'for', 'in', 'to', 'on', '&', 'with', 'at']);
+
+const PROVINCES: Record<string, string> = {
+  easterncape: 'Eastern Cape',
+  freestate: 'Free State',
+  gauteng: 'Gauteng',
+  kwazulunatal: 'KwaZulu-Natal',
+  limpopo: 'Limpopo',
+  mpumalanga: 'Mpumalanga',
+  northerncape: 'Northern Cape',
+  northwest: 'North West',
+  westerncape: 'Western Cape',
+};
+
+/** "PROVINCIAL ADMINISTRATION: EASTERN CAPE" on a line of its own starts that province's section. */
+export function provinceOfLine(line: string): string {
+  const m = line.trim().match(/^PROVINCIAL\s+ADMINISTRATION\s*:\s*([A-Za-z][A-Za-z \-]+)$/i);
+  return m ? PROVINCES[m[1].toLowerCase().replace(/[^a-z]/g, '')] ?? '' : '';
+}
 
 /** "Department of Public Works & Infrastructure, Private BAG X Bloemfontein," -> "Department of Public Works and Infrastructure". */
 export function cleanDeptName(raw: string): string {
@@ -220,6 +258,7 @@ export function cleanDeptName(raw: string): string {
     .replace(/\s+/g, ' ')
     .replace(ADDRESS_START, '')
     .replace(/\s*&\s*/g, ' and ')
+    .replace(/\s*\(\s*[A-Za-z]{2,8}\s*\)\s*$/, '')
     .replace(/[,;:\-–\s]+$/g, '')
     .replace(/^[,;:\-–\s]+/g, '')
     .trim();
@@ -237,25 +276,30 @@ export function isDeptHeading(line: string): boolean {
   const upper = !/[a-z]/.test(l);
   const cleaned = l.replace(ADDRESS_START, '').trim();
   if (!upper && (NOT_HEAD.test(cleaned) || SENTENCE_WORDS.test(cleaned))) return false;
-  const words = cleaned.split(/\s+/).length;
+  const words = cleaned.split(/\s+/);
+  // Mixed-case headings are written in title case. A lower-case word such as "external" means the line is a sentence.
+  if (!upper && words.some((w) => /^[a-z]/.test(w) && !SMALL_WORDS.has(w.toLowerCase()))) return false;
   // Only "Department/Ministry of ..." may be long in mixed case; other names ("National Treasury") must be short.
-  if (!upper && !/^(?:the\s+)?(?:department|ministry)\s+of\b/i.test(cleaned) && words > 5) return false;
-  if (words > 14) return false;
+  if (!upper && !/^(?:the\s+)?(?:department|ministry)\s+of\b/i.test(cleaned) && words.length > 5) return false;
+  if (words.length > 14) return false;
   // Upper-case headings may still be a job title like "DEPARTMENT OF ... MANAGER"; reject those with a duty keyword.
   return !/\b(?:ref|no|post|salary|centre)\b[\s:.]*\d?/i.test(l);
 }
 
-/** Collapse the text to one line, remembering where each department heading starts. */
-function flatten(raw: string): { text: string; heads: Head[]; lineStarts: number[]; lineTexts: string[] } {
+/** Collapse the text to one line, remembering where headings, provinces and annexures start. */
+function flatten(raw: string): { text: string; heads: Head[]; provinces: Mark[]; bodyStart: number; lineStarts: number[]; lineTexts: string[] } {
   const lines = raw.split(/\r?\n/).map(normalizeText).filter(Boolean);
   const heads: Head[] = [];
+  const provinces: Mark[] = [];
   const lineStarts: number[] = [];
   const lineTexts: string[] = [];
+  let bodyStart = -1;
   let flat = '';
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
     let name = '';
-    if (isDeptHeading(line)) {
+    const province = provinceOfLine(line);
+    if (!province && isDeptHeading(line)) {
       name = line;
       // A long heading may wrap onto the next line ("... LAND REFORM AND" / "RURAL DEVELOPMENT").
       while (/(?:\band|\bof|&|,)$/i.test(name) && i + 1 < lines.length && !/[a-z]/.test(lines[i + 1]) && name.length < 90) {
@@ -268,14 +312,19 @@ function flatten(raw: string): { text: string; heads: Head[]; lineStarts: number
     lineTexts.push(line);
     flat += (flat ? ' ' : '') + line;
     if (name) heads.push({ pos, end: pos + line.length, name: line });
+    if (province) provinces.push({ pos, name: province });
+    // Everything before "ANNEXURE A" is the circular's front matter (notices, amendments, index), not posts.
+    if (bodyStart < 0 && /^ANNEXURE\s+A$/i.test(line)) bodyStart = pos;
   }
-  return { text: flat, heads, lineStarts, lineTexts };
+  return { text: flat, heads, provinces, bodyStart: Math.max(bodyStart, 0), lineStarts, lineTexts };
 }
 
 const ONLINE_RE = /\b(?:apply|applying|applications?|submit(?:ted)?|submission)\b[^.]{0,80}\b(?:online|on-line|e-?recruitment|recruitment portal|career(?:s)? portal)\b|\bonline\s+(?:application|system|portal|platform|recruitment)|\bonly\b[^.]{0,25}\bonline\b|\be-?recruitment\b|\bapply\s+online\b/i;
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+// Wording that rules email out, e.g. "Do not send any applications to this email address" or "e-mailed applications will not be accepted".
+const NO_EMAIL_RE = /do\s+not\s+send[^.]{0,60}applications?[^.]{0,60}e-?mail|e-?mail(?:ed)?\s*(?:,|and|or)?[^.]{0,120}(?:will\s+not|shall\s+not|not\s+be)\s+(?:be\s+)?(?:accepted|considered)|no\s+e-?mail\s+applications?|not\s+accept\s+(?:any\s+)?e-?mail/i;
+const EMAIL_RE = /[A-Za-z0-9._%+/-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
-const LOOKS_LIKE_REF = (w: string) => /\d/.test(w) && /[/\\-]/.test(w);
+const LOOKS_LIKE_REF = (w: string) => /\d/.test(w) && /[A-Za-z0-9][/\\-][A-Za-z0-9]/.test(w) && !/^\d{4}[/-]\d{2,4}$/.test(w) && !/^\d{1,2}[-–/]\d{1,2}(?:TH)?$/i.test(w);
 
 /** A title must not be (or contain) a reference number or a date. */
 function validTitle(t: string): boolean {
@@ -318,7 +367,7 @@ function cleanTitleLine(l: string): string {
 }
 
 function plausibleTitle(t: string): boolean {
-  return validTitle(t) && t.length <= 120 && t.split(/\s+/).length <= 16 && !/@/.test(t) && !NOT_A_TITLE.test(t) && !isDeptHeading(t);
+  return validTitle(t) && t.length <= 160 && t.split(/\s+/).length <= 20 && !/@/.test(t) && !NOT_A_TITLE.test(t) && !isDeptHeading(t);
 }
 
 /** Why a position name should be double-checked by the applicant (empty when it looks fine). */
@@ -331,27 +380,69 @@ export function titleProblem(title: string, ref: string): string {
   return '';
 }
 
+const POST_LABEL = /\bPOST\s+(\d+\/\d+)\s*[:\-–]\s*/gi;
+const LABEL_STOP = /\bREF(?:ERENCE)?\b\s*(?:NO|NUMBER|NR)?\s*[:.]?|\bSALARY\b|\bCENTRE\b|\bDirectorate\b|\bBranch\b|\bREQUIREMENTS?\b|\bDUTIES\b|\bENQUIRIES\b|\bAPPLICATIONS?\b|\bCLOSING\b|\bNOTE\b|\bGrade\s+\d\s*:/;
+
+/** The title that follows "POST 36/128 :" (it may wrap onto the next line), without "(X2 POSTS)". */
+function titleFromLabel(text: string, labelEnd: number): string {
+  const after = text.slice(labelEnd, labelEnd + 400);
+  const cut = after.search(LABEL_STOP);
+  const t = (cut >= 0 ? after.slice(0, cut) : after.slice(0, 120))
+    .replace(/\(?\s*X\s*\d+\s*POSTS?\s*\)?/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s:\-–,;(]+$/g, '')
+    .trim();
+  return t ? titleCase(t) : '';
+}
+
+/** Salary level, only from the post's salary line ("(Level 08)"). Empty when the post does not state one. */
+export function parseLevel(body: string): string {
+  const re = /\b(?:salary\s+)?level\s*0?(\d{1,2})\b/i;
+  const sal = body.match(/SALARY\s*:?\s*(.{0,300})/i)?.[1] ?? '';
+  const m = sal.match(re) ?? body.slice(0, 400).match(re);
+  return m ? String(Number(m[1])) : '';
+}
+
 export function parseCircular(rawText: string): CircularInfo {
-  const { text, heads, lineStarts, lineTexts } = flatten(rawText);
-  const refRe = /\bREF(?:ERENCE)?(?:\s*(?:NO|NUMBER|NR|NUM)\b\.?)?\s*[:：.]?\s*/gi;
+  const flat = flatten(rawText);
+  const { text, provinces, bodyStart, lineStarts, lineTexts } = flat;
+  const heads = flat.heads.filter((h) => h.pos >= bodyStart);
+  const refRe = /\bREF(?:ERENCE)?\b(?:\s*(?:NO|NUMBER|NR|NUM)\b\.?)?\s*[:：.]?\s*/gi;
+  // Circulars label every post "POST 36/128 : TITLE". When they do, that label is the most reliable anchor.
+  const labels = [...text.matchAll(POST_LABEL)].filter((m) => (m.index ?? 0) >= bodyStart).map((m) => ({ pos: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+  const labelled = labels.length >= 3;
+  const labelFor = (idx: number) => (labelled ? [...labels].reverse().find((l) => l.pos < idx && idx - l.pos < 3000) : undefined);
+
   const markers: { idx: number; end: number; ref: string }[] = [];
   const seenRef = new Set<string>();
   for (const m of text.matchAll(refRe)) {
     const idx = m.index ?? 0;
+    if (idx < bodyStart) continue;
     const end = idx + m[0].length;
-    const ref = readRef(text.slice(end, end + 60));
+    let ref = readRef(text.slice(end, end + 60));
+    // "REF NO: CAC" has no digits: accept it when it sits just under a post label.
+    if (!ref && labelled && /^REF\s*NO/i.test(m[0])) {
+      const lb = labelFor(idx);
+      if (lb && idx - lb.pos < 800) ref = readRefLoose(text.slice(end, end + 90));
+    }
     if (!ref || seenRef.has(ref)) continue;
     seenRef.add(ref);
     markers.push({ idx, end, ref });
   }
+
   const dates = findDates(text);
-  const closing = dates.filter((d) => d.hasTime || d.keyword);
+  const candidates = dates.filter((d) => d.hasTime || d.keyword);
+  // "CLOSING DATE : 26 October 2026" is the real closing date. Dates inside notices ("...the closing date of 05 October...") are not.
+  const labelledDates = candidates.filter((d) => /CLOSING\s+DATE\s*[:\-–]?\s*$/i.test(text.slice(Math.max(0, d.index - 30), d.index)));
+  const closing = labelledDates.length ? labelledDates : candidates;
   const emails = [...new Set([...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((m) => m[0]))];
 
   const seenDept = new Map<string, string>();
-  const deptName = (raw: string) => {
-    const key = deptKey(raw);
-    if (!seenDept.has(key)) seenDept.set(key, cleanDeptName(raw));
+  const deptName = (raw: string, pos: number) => {
+    const prov = [...provinces].reverse().find((p) => p.pos <= pos);
+    const full = `${prov ? prov.name + ' ' : ''}${cleanDeptName(raw)}`;
+    const key = deptKey(full);
+    if (!seenDept.has(key)) seenDept.set(key, full);
     return seenDept.get(key)!;
   };
   const lineAt = (idx: number) => {
@@ -360,6 +451,11 @@ export function parseCircular(rawText: string): CircularInfo {
     return k;
   };
   const titles = markers.map((mk, i) => {
+    const label = labelFor(mk.idx);
+    if (label) {
+      const t = titleFromLabel(text, label.end);
+      if (plausibleTitle(t)) return { title: t, start: label.pos };
+    }
     const prevEnd = i === 0 ? 0 : markers[i - 1].end;
     const lastHead = [...heads].reverse().find((h) => h.end <= mk.idx);
     const floor = Math.max(prevEnd, lastHead ? lastHead.end : 0);
@@ -380,63 +476,103 @@ export function parseCircular(rawText: string): CircularInfo {
     }
     return first;
   });
+  const starts = markers.map((_, i) => titles[i].start);
+  const boundaries = [...heads.map((h) => h.pos), ...provinces.map((p) => p.pos).filter((p) => p >= bodyStart)].sort((a, b) => a - b);
 
   const posts: Post[] = markers.map((mk, i) => {
-    const segEnd = i + 1 < markers.length ? titles[i + 1].start : text.length;
-    const seg = text.slice(mk.idx, segEnd);
-    const rest = text.slice(mk.end, segEnd);
-    const inSeg = closing.find((d) => d.index >= mk.idx && d.index < segEnd);
-    const before = [...closing].reverse().find((d) => d.index < titles[i].start);
+    const label = labelFor(mk.idx);
+    const segStart = label ? label.pos : mk.idx;
+    const nextStart = labelled ? labels.find((l) => l.pos > mk.idx)?.pos ?? text.length : i + 1 < markers.length ? titles[i + 1].start : text.length;
+    const nextBoundary = boundaries.find((b) => b > mk.idx) ?? text.length;
+    const segEnd = Math.min(nextStart, nextBoundary);
+    const seg = text.slice(segStart, segEnd);
+    // With labelled posts the whole block after the label belongs to the post, whichever order its parts come in.
+    const rest = label ? text.slice(label.end, segEnd) : text.slice(mk.end, segEnd);
+    const inSeg = closing.find((d) => d.index >= segStart && d.index < segEnd);
+    const before = [...closing].reverse().find((d) => d.index < segStart);
     const after = closing.find((d) => d.index >= segEnd);
     const closingDate = (inSeg ?? before ?? after)?.date ?? null;
-    const dir = rest.match(/Directorate\s*:?\s*(.+?)(?=\s+R\s?\d|\s+per annum|\s+Level|\s+Grade|\s+Gauteng|$)/i);
+    const dir = rest.match(/Directorate\s*:?\s*(.+?)(?=\s+R\s?\d|\s+per annum|\s+Level|\s+Grade|\s+SALARY|\s+CENTRE|\s+Gauteng|$)/i);
     const sal = rest.match(/R\s?\d{1,3}(?:[ ,]\d{3})+(?:\.\d{2})?(?:\s*(?:per annum|p\.?a\.?))?/i);
-    const lvl = rest.match(/\((?:Level|Grade)\s*(\d{1,2})\)/i) ?? rest.match(/\b(?:Level|Grade)\s*(\d{1,2})\b/i);
-    const loc = rest.match(/(?:Gauteng|Western Cape|Eastern Cape|Northern Cape|KwaZulu-Natal|Free State|Limpopo|Mpumalanga|North West)(?:\s*\([^)]+\))?/i);
-    const headIdx = heads.reduce((k, h, j) => (h.pos <= titles[i].start ? j : k), -1);
+    const loc = rest.match(/CENTRE\s*:?\s*([^.]{2,60}?)(?=\s+REQUIREMENTS|\s+DUTIES|$)/i) ?? rest.match(/(?:Gauteng|Western Cape|Eastern Cape|Northern Cape|KwaZulu-Natal|Free State|Limpopo|Mpumalanga|North West)(?:\s*\([^)]+\))?/i);
+    const headIdx = heads.reduce((k, h, j) => (h.pos <= segStart ? j : k), -1);
     const head = headIdx >= 0 ? heads[headIdx] : null;
     const blockStart = head ? head.pos : 0;
     const blockEnd = headIdx >= 0 && headIdx + 1 < heads.length ? heads[headIdx + 1].pos : text.length;
     const block = text.slice(blockStart, blockEnd);
-    const firstInBlock = markers.map((_, j) => titles[j].start).find((t) => t >= blockStart) ?? blockEnd;
+    const firstInBlock = starts.find((t) => t >= blockStart) ?? blockEnd;
     const preamble = text.slice(blockStart, Math.min(firstInBlock, blockEnd));
-    const segEmail = seg.match(EMAIL_RE)?.[0] ?? '';
+    // The route comes from the post's own APPLICATIONS text. An address in the ENQUIRIES text is for questions, not applications.
+    const appRaw = seg.match(/\bAPPLICATIONS\b\s*:?\s*(.{0,700})|\bApplications\s*:\s*(.{0,700})/)?.slice(1).find(Boolean) ?? '';
+    // The instruction ends where the next labelled part of the post starts (NOTE, ENQUIRIES, CLOSING DATE ...).
+    const appEnd = appRaw.search(/\b(?:ENQUIRIES|NOTE|CLOSING\s+DATE|DUTIES|REQUIREMENTS|SALARY|CENTRE|POST\s+\d+\/\d+)\b/);
+    const appCut = appEnd >= 0 ? appRaw.slice(0, appEnd) : appRaw;
+    // In scrambled layouts the "text" after APPLICATIONS is just more labels; that is no instruction at all.
+    const appText = appCut.trim().length >= 8 ? appCut : '';
+    const enqText = seg.match(/\bENQUIRIES\b\s*:?\s*(.{0,300})/)?.[1] ?? '';
+    const appEmail = appText.match(EMAIL_RE)?.[0] ?? '';
+    const segEmail = [...seg.matchAll(new RegExp(EMAIL_RE.source, 'g'))].map((m) => m[0]).find((e) => !enqText.includes(e)) ?? '';
     const segOnline = ONLINE_RE.test(seg);
-    const blockEmail = block.match(EMAIL_RE)?.[0] ?? (heads.length === 0 && emails.length === 1 ? emails[0] : '');
+    const blockEmail = preamble.match(EMAIL_RE)?.[0] ?? block.match(EMAIL_RE)?.[0] ?? (heads.length === 0 && emails.length === 1 ? emails[0] : '');
     const blockOnline = ONLINE_RE.test(preamble);
+    const NOT_BY_EMAIL = 'The circular does not take email applications for this post (online system or hand delivery).';
     let applyBy: Post['applyBy'] = 'none';
     let email = '';
     let applyNote = '';
-    if (segEmail) { applyBy = 'email'; email = segEmail; }
-    else if (segOnline) { applyBy = 'online'; applyNote = 'This post must be applied for online on the department’s own system.'; }
-    else if (blockEmail && !(blockOnline && !preamble.match(EMAIL_RE))) { applyBy = 'email'; email = blockEmail; }
-    else if (blockOnline) { applyBy = 'online'; applyNote = 'This department asks for online applications on its own system.'; }
+    if (NO_EMAIL_RE.test(appText) || NO_EMAIL_RE.test(seg)) { applyBy = 'online'; applyNote = NOT_BY_EMAIL; }
+    else if (appEmail) { applyBy = 'email'; email = appEmail; }
+    else if (appText) { applyBy = 'online'; applyNote = NOT_BY_EMAIL; } // the post's own instruction names no email address
+    else if (segEmail) { applyBy = 'email'; email = segEmail; }
+    else if (segOnline) { applyBy = 'online'; applyNote = NOT_BY_EMAIL; }
+    else if (NO_EMAIL_RE.test(preamble) || (blockOnline && !preamble.match(EMAIL_RE))) { applyBy = 'online'; applyNote = NOT_BY_EMAIL; }
+    else if (blockEmail) { applyBy = 'email'; email = blockEmail; }
     else applyNote = 'No email address was found for this post.';
-    const em = email ? [email] : null;
     const enq = seg.match(/ENQUIRIES\s*:?\s*(.+?)(?=\s+APPLICATIONS|\s+NOTE|$)/i) ?? seg.match(/(?:Mr|Ms|Mrs|Dr|Prof)\.?\s+[A-Z]\s+[A-Z][a-z]+\s+Tel[^.]{0,40}/);
     const reqSection = requirementsSection(rest);
     const reqs = parseRequirements(reqSection);
-    const nextHead = heads.find((h) => h.pos > mk.idx && h.pos < segEnd);
-    const rawSeg = nextHead ? text.slice(mk.idx, nextHead.pos).trim() : seg;
     return {
       id: `p${i}`,
-      title: plausibleTitle(titles[i].title) ? titles[i].title : recoverTitle(rest.startsWith(mk.ref) ? rest.slice(mk.ref.length).trim() : rest) || `Post ${mk.ref}`,
+      title: plausibleTitle(titles[i].title) ? titles[i].title : recoverTitle(rest.startsWith(mk.ref) ? rest.slice(mk.ref.length).trim() : text.slice(mk.end, segEnd)) || `Post ${mk.ref}`,
       ref: mk.ref,
       directorate: dir ? dir[1].trim().slice(0, 90) : '',
       salary: sal ? sal[0].replace(/\s+/g, ' ').trim() : '',
-      level: lvl ? lvl[1] : '',
-      location: loc ? loc[0] : '',
+      level: parseLevel(rest),
+      levelFromSalary: false,
+      location: loc ? (loc[1] ?? loc[0]).trim() : '',
       closing: closingDate,
       email,
       applyBy,
       applyNote,
-      department: head ? deptName(head.name) : '',
+      department: head ? deptName(head.name, head.pos) : '',
       enquiries: enq ? (enq[1] ?? enq[0]).trim().slice(0, 80) : '',
       reqs,
       requirements: reqSection.trim(),
-      raw: rawSeg,
+      raw: seg,
     };
   });
+
+  // Many posts print only a salary. Other posts in the same circular pair that salary with a stated level,
+  // so a salary that always goes with one level tells us the level of the posts that leave it out.
+  const startOf = (sal: string) => {
+    const m = sal.match(/R\s?(\d{1,3}(?:[ ,]\d{3})+)/);
+    return m ? Number(m[1].replace(/[ ,]/g, '')) : 0;
+  };
+  const bySalary = new Map<number, Map<string, number>>();
+  for (const p of posts) {
+    const k = startOf(p.salary);
+    if (!k || !p.level) continue;
+    const m = bySalary.get(k) ?? new Map<string, number>();
+    m.set(p.level, (m.get(p.level) ?? 0) + 1);
+    bySalary.set(k, m);
+  }
+  for (const p of posts) {
+    if (p.level) continue;
+    const m = bySalary.get(startOf(p.salary));
+    if (m && m.size === 1) {
+      p.level = [...m.keys()][0];
+      p.levelFromSalary = true;
+    }
+  }
 
   const NOT_NAME = 'PUBLIC\\b|SERVICE\\b|VACANC|CIRCULAR|REF\\b|NOTE\\b|ANNEXURE|ADVERT|POSTS?\\b|NO\\b|CLOSING|DATE\\b';
   const dept =
@@ -444,7 +580,7 @@ export function parseCircular(rawText: string): CircularInfo {
     text.match(/\bDepartment of (?:the )?[A-Z][A-Za-z&]*(?: (?:and |of |&)?[A-Z][A-Za-z&]*){0,4}/)?.[0] ??
     '';
 
-  const departments = [...new Set(heads.map((h) => deptName(h.name)))];
+  const departments = [...new Set(posts.map((p) => p.department).filter(Boolean))];
   const subj = text.match(/[^.]*\b(?:subject|quote|state|indicate|reference)[^.]{0,40}\b(?:reference|ref)\s*(?:number|no)?[^.]*(?:subject|heading|header)[^.]*\./i);
   const size = text.match(/maximum of\s*(\d+)\s*(?:megabytes|mb)/i);
 

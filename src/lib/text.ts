@@ -44,18 +44,22 @@ export function containsPhrase(haystackNorm: string, phrase: string): boolean {
   return p.length > 1 && (' ' + haystackNorm + ' ').includes(' ' + p + ' ');
 }
 
-const SMALL = new Set(['of', 'and', 'the', 'in', 'to', 'for', 'on', 'at', 'a']);
+const SMALL = new Set(['of', 'and', 'the', 'in', 'to', 'for', 'on', 'at', 'a', 'with']);
+const ACRONYMS = new Set(['ict', 'it', 'hr', 'sms', 'mms', 'gis', 'soc', 'cfo', 'ceo', 'coo', 'cio', 'hod', 'osd', 'icu', 'hiv', 'aids', 'erp', 'pfma', 'epwp', 'ecsa', 'hpcsa', 'sanc', 'saps', 'sars', 'scm', 'pmu', 'ems', 'ohs', 'sassa', 'gdhs', 'dsac', 'ecd']);
+
+/** "ICT SPECIALIST (BUSINESS ANALYST)" -> "ICT Specialist (Business Analyst)". Real acronyms stay in capitals. */
 export function titleCase(s: string): string {
-  return s
-    .toLowerCase()
-    .split(' ')
+  const words = s.toLowerCase().split(' ');
+  return words
     .map((w, i) => {
       const bare = w.replace(/[^a-z]/g, '');
-      if (bare.length > 0 && bare.length <= 3 && !SMALL.has(bare) && !/^(sub|dep|dir|man|ass)$/.test(bare)) return w.toUpperCase();
+      if (bare === 'a' && words[i - 1]?.replace(/[^a-z]/g, '') === 'grade') return w.replace('a', 'A'); // "Grade A"
+      if (bare && (ACRONYMS.has(bare) || (bare.length <= 3 && !/[aeiouy]/.test(bare)))) return w.replace(/[a-z]+/g, (x) => (ACRONYMS.has(x) || !/[aeiouy]/.test(x) ? x.toUpperCase() : x));
       if (i > 0 && SMALL.has(bare)) return w;
       return w.replace(/[a-z]/, (c) => c.toUpperCase());
     })
-    .join(' ');
+    .join(' ')
+    .replace(/([-/(])([a-z])/g, (_m, a, b) => a + b.toUpperCase());
 }
 
 export function levelOf(text: string): number {
