@@ -17,7 +17,7 @@ it('fills and merges', async () => {
     disability: 'no' as const, citizen: 'yes' as const, workPermit: '' as const, convicted: 'yes' as const, convictedDetails: 'Traffic fine 2015, paid admission of guilt, no custodial sentence',
     pendingCriminal: 'no' as const, dismissed: 'no' as const, pendingDisciplinary: 'no' as const, resigned: 'no' as const, illHealth: 'no' as const,
     businessWithState: 'yes' as const, businessDetails: 'Director of ABC Pty Ltd, supplies stationery to the Dept of Health', relinquish: 'yes' as const,
-    yearsPrivate: '3', yearsPublic: '10', regDate: '2012', regNo: 'ECSA 12345', notice: '1 calendar month', prefLanguage: 'English', method: 'email' as const,
+    yearsPrivate: '2 yrs 11 mths', yearsPublic: '1 yr 11 mths', regDate: '2012', regNo: 'ECSA 12345', notice: '1 calendar month', prefLanguage: 'English', method: 'email' as const,
     contact: 'thabo@example.com / 082 555 1234', languages: [{ language: 'English', speak: 'good', write: 'good' }, { language: 'isiZulu', speak: 'good', write: 'fair' }],
     qualifications: [{ school: 'Tshwane University of Technology', qualification: 'National Diploma: Information Technology', year: '2012' }, { school: 'Pretoria Boys High', qualification: 'Matric', year: '2008' }],
     currentStudy: 'UNISA - BTech Information Technology',

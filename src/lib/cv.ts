@@ -1,4 +1,5 @@
-import type { CvInfo, CvQualification, CvWork } from './types';
+import type { CvInfo, CvQualification, CvWork, ExpEntry } from './types';
+import { experienceTotals, monthIdx, toYears } from './experience';
 import { levelOf } from './text';
 
 const MON = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ');
@@ -135,39 +136,34 @@ const ORG_WORDS = /\b(pty|ltd|limited|department|dept|municipality|council|unive
 const PUBLIC_WORDS = /\b(department|dept|municipality|municipal|provincial|government|council|treasury|sars|saps|sassa|sandf|presidency|public service|parliament|legislature|national school|public works|metro)\b/i;
 
 interface Range {
-  from: number;
-  to: number;
+  startIdx: number;
+  endIdx: number;
+  present: boolean;
+  approx: boolean;
   fromTok: { mm: string; yy: string };
   toTok: { mm: string; yy: string; present: boolean };
 }
 
-function parseRange(line: string): (Range & { match: string }) | null {
+const MON_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtIdx = (idx: number, yearOnly: boolean) => (yearOnly ? String(Math.floor(idx / 12)) : `${MON_NAMES[idx % 12]} ${Math.floor(idx / 12)}`);
+
+function parseRange(line: string): (Range & { match: string; period: string }) | null {
   const m = line.match(RANGE_RE);
   if (!m) return null;
   const a = parseDateTok(m[1]);
   if (!a) return null;
   const present = /present|current|date|now|today|ongoing/i.test(m[2]);
   const now = new Date();
-  const b = present ? { mm: String(now.getMonth() + 1).padStart(2, '0'), yy: String(now.getFullYear()).slice(2), idx: now.getFullYear() * 12 + now.getMonth() } : parseDateTok(m[2]);
+  const b = present ? { mm: String(now.getMonth() + 1).padStart(2, '0'), yy: String(now.getFullYear()).slice(2), idx: monthIdx(now) } : parseDateTok(m[2]);
   if (!b) return null;
   if (b.idx < a.idx) return null;
-  return { from: a.idx, to: b.idx + (b.mm === '' ? 11 : 0), fromTok: a, toTok: { mm: b.mm, yy: b.yy, present }, match: m[0] };
-}
-
-function mergedMonths(ranges: { from: number; to: number }[]): number {
-  const s = [...ranges].sort((x, y) => x.from - y.from);
-  let total = 0;
-  let curEnd = -1;
-  let curStart = -1;
-  for (const r of s) {
-    if (curEnd < 0 || r.from > curEnd) {
-      if (curEnd >= 0) total += curEnd - curStart + 1;
-      curStart = r.from;
-      curEnd = r.to;
-    } else curEnd = Math.max(curEnd, r.to);
-  }
-  if (curEnd >= 0) total += curEnd - curStart + 1;
-  return total;
+  const fromYearOnly = a.mm === '';
+  const toYearOnly = !present && b.mm === '';
+  // Only years given: "2013 - 2016" is 3 years, not 4. A single year counts as about 6 months.
+  let endIdx = present ? b.idx : toYearOnly ? b.idx + 11 : b.idx;
+  if (fromYearOnly && toYearOnly) endIdx = a.idx + Math.max(Math.floor(b.idx / 12) - Math.floor(a.idx / 12), 0.5) * 12 - 1;
+  const period = `${fmtIdx(a.idx, fromYearOnly)} – ${present ? 'Present' : fmtIdx(b.idx, toYearOnly)}`;
+  return { startIdx: a.idx, endIdx, present, approx: fromYearOnly || toYearOnly, fromTok: a, toTok: { mm: b.mm, yy: b.yy, present }, match: m[0], period };
 }
 
 const isBullet = (l: string) => /^\s*[•·▪●○\-*–]\s/.test(l) || l.length > 90;
@@ -181,9 +177,9 @@ function splitParts(line: string): string[] {
     .filter((x) => x.length > 1);
 }
 
-function parseWork(lines: string[]): { work: CvWork[]; ranges: { from: number; to: number; pub: boolean }[] } {
+function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[] } {
   const work: (CvWork & { idx: number })[] = [];
-  const ranges: { from: number; to: number; pub: boolean }[] = [];
+  const experience: ExpEntry[] = [];
   for (let i = 0; i < lines.length; i++) {
     const r = parseRange(lines[i]);
     if (!r) continue;
@@ -215,12 +211,28 @@ function parseWork(lines: string[]): { work: CvWork[]; ranges: { from: number; t
       toMM: r.toTok.present ? 'Pres' : r.toTok.mm,
       toYY: r.toTok.present ? '' : r.toTok.yy,
       reason,
-      idx: r.to,
+      idx: r.endIdx,
     });
-    ranges.push({ from: r.from, to: r.to, pub: PUBLIC_WORDS.test(employer + ' ' + post) });
+    const label = `${post} ${employer}`;
+    const volunteer = /volunteer|voluntary/i.test(label);
+    const oneOff = !r.present && !r.approx && r.endIdx - r.startIdx + 1 <= 1; // a single month: an event, not a job
+    experience.push({
+      id: `x${experience.length}`,
+      employer: employer.slice(0, 70),
+      post: post.slice(0, 60),
+      startIdx: r.startIdx,
+      endIdx: r.endIdx,
+      present: r.present,
+      approx: r.approx,
+      sector: PUBLIC_WORDS.test(label) ? 'public' : 'private',
+      include: !volunteer && !oneOff,
+      period: r.period,
+      note: volunteer ? 'Volunteer work, not counted' : oneOff ? 'One month or less, not counted' : '',
+    });
   }
   work.sort((a, b) => b.idx - a.idx);
-  return { work: work.map(({ idx: _i, ...w }) => w), ranges };
+  experience.sort((a, b) => b.endIdx - a.endIdx);
+  return { work: work.map(({ idx: _i, ...w }) => w), experience };
 }
 
 const SCHOOL_RE = /\b(university|college|school|institute|tvet|academy|high|technikon|unisa|wits|nwu|tut|cput|uj|ukzn|ufs|up|stellenbosch|polytechnic|varsity)\b/i;
@@ -345,9 +357,9 @@ export function parseCv(rawText: string): CvInfo {
   const nationality = text.match(/nationality\s*[:\-]\s*([A-Za-z ]{3,25})/i)?.[1]?.trim() ?? (idCand ? 'South African' : '');
 
   const expLines = sec.experience ?? lines.filter((l) => !(levelOf(l) > 0 && !TITLE_WORDS.test(l)));
-  const { work, ranges } = parseWork(expLines);
-  const total = ranges.length ? mergedMonths(ranges) / 12 : null;
-  const pubMonths = ranges.length ? mergedMonths(ranges.filter((r) => r.pub)) : 0;
+  const { work, experience } = parseWork(expLines);
+  const totals = experience.length ? experienceTotals(experience) : null;
+  const total = totals ? totals.totalMonths / 12 : null;
   const stated = text.match(/(\d{1,2})\+?\s*years?(?:['’]s)?\s*(?:of\s+)?(?:relevant\s+|working\s+|professional\s+)?experience/i);
   const totalYears = total ?? (stated ? Number(stated[1]) : null);
 
@@ -384,11 +396,12 @@ export function parseCv(rawText: string): CvInfo {
     registration: reg ? `${reg[1].toUpperCase()} ${reg[2]}` : '',
     qualifications,
     work,
+    experience,
     languages,
     references,
     hasReferences,
     totalYears: totalYears !== null ? Math.round(totalYears * 10) / 10 : null,
-    publicYears: ranges.length ? Math.round((pubMonths / 12) * 10) / 10 : null,
+    publicYears: totals ? toYears(totals.publicMonths) : null,
     driversLicence: /driver[’']?s?[’']?\s*licen[cs]e|licen[cs]e\s*:?\s*code|\bcode\s*(?:08|10|14|b|eb|c1)\b/i.test(text),
     gaps,
   };

@@ -71,6 +71,26 @@ export interface CvWork {
   reason: string;
 }
 
+/** One job from the CV, for working out years of experience. */
+export interface ExpEntry {
+  id: string;
+  employer: string;
+  post: string;
+  /** Month numbers (year * 12 + month - 1). endIdx is the last month worked. */
+  startIdx: number;
+  endIdx: number;
+  /** Still working there: counted up to today. */
+  present: boolean;
+  /** Only years were given, so the months are an estimate. */
+  approx: boolean;
+  /** "public": a government department or other public body. Universities and companies count as private. */
+  sector: 'public' | 'private';
+  /** Counted in the total. Volunteer work and one-off events start unticked. */
+  include: boolean;
+  period: string;
+  note: string;
+}
+
 export interface CvInfo {
   text: string;
   name: string;
@@ -89,6 +109,7 @@ export interface CvInfo {
   registration: string;
   qualifications: CvQualification[];
   work: CvWork[];
+  experience: ExpEntry[];
   languages: { language: string; speak: string; write: string }[];
   references: { name: string; relationship: string; tel: string }[];
   /** True when the CV has a references heading or any referee details. */
@@ -178,6 +199,10 @@ export interface Profile {
   signature: string; // PNG data URL
   initials: string; // PNG data URL
   signatureConsent: boolean;
+  /** Every job on the CV, with whether it is counted and in which sector. */
+  experience: ExpEntry[];
+  /** The person typed the years themselves, so they are not recalculated. */
+  yearsManual: boolean;
   /** Identifies the CV (and CV-reader version) the CV-derived lists were read from. */
   cvKey: string;
 }

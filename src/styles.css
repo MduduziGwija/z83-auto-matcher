@@ -234,3 +234,11 @@ button.pill.pill-on { color: var(--on-primary); }
 .toast { position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 30; width: min(100% - 32px, 640px); display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); background: var(--err-bg); color: var(--fg); border: 2px solid var(--danger); border-radius: var(--radius); font-weight: 700; box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
 .toast span { flex: 1; }
 .section-error { border-left: 4px solid var(--danger); padding-left: var(--s3); }
+
+.expbox { margin-block: var(--s4); padding: var(--s3) var(--s4); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.explist { list-style: none; margin: var(--s3) 0; padding: 0; display: grid; gap: var(--s3); }
+.expitem { display: grid; gap: var(--s2) var(--s3); padding-bottom: var(--s3); border-bottom: 1px solid var(--muted); }
+@media (min-width: 720px) { .expitem { grid-template-columns: 1fr 200px; align-items: center; } }
+.expitem .field { margin: 0; }
+.expitem-off { opacity: .75; }
+.totals { font-size: 1.05rem; margin: var(--s2) 0 0; }

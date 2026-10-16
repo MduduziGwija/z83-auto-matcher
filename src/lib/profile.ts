@@ -1,5 +1,6 @@
 import type { CvInfo, Profile, YesNo } from './types';
 import { idDetails } from './cv';
+import { experienceTotals, formatMonths } from './experience';
 
 const KEY = 'z83.profile.v1';
 
@@ -11,7 +12,7 @@ export const emptyProfile = (): Profile => ({
   resigned: '', resignedDetails: '', illHealth: '', businessWithState: '', businessDetails: '', relinquish: '',
   yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '', notice: '', prefLanguage: 'English',
   method: 'email', contact: '', languages: [], qualifications: [], currentStudy: '', work: [],
-  reappointCondition: '', reappointDetails: '', references: [], signature: '', initials: '', signatureConsent: false, cvKey: '',
+  reappointCondition: '', reappointDetails: '', references: [], signature: '', initials: '', signatureConsent: false, experience: [], yearsManual: false, cvKey: '',
 });
 
 export function loadProfile(): Profile {
@@ -41,7 +42,7 @@ export function clearProfile(): void {
 }
 
 /** Bump this whenever the CV reader changes, so lists saved from an older reading are re-read. */
-export const CV_PARSER_VERSION = 3;
+export const CV_PARSER_VERSION = 4;
 
 export function cvKeyOf(cv: CvInfo): string {
   let h = 5381;
@@ -64,7 +65,7 @@ export function mergeCv(savedIn: Profile, cv: CvInfo): { profile: Profile; from:
   const saved: Profile =
     savedIn.cvKey === key
       ? savedIn
-      : { ...savedIn, qualifications: [], work: [], references: [], languages: [], currentStudy: '', yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '' };
+      : { ...savedIn, qualifications: [], work: [], experience: [], yearsManual: false, references: [], languages: [], currentStudy: '', yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '' };
   const p: Profile = { ...saved, cvKey: key };
   const from: FilledFrom = {};
   const fill = <K extends keyof Profile>(k: K, v: Profile[K] | undefined | null) => {
@@ -88,8 +89,18 @@ export function mergeCv(savedIn: Profile, cv: CvInfo): { profile: Profile; from:
   // Use the applicant's own email if the CV has one, otherwise their phone number.
   fill('contact', cv.email || cv.phone);
   if (!saved.contact && !cv.email && cv.phone) p.method = 'telephone';
-  fill('yearsPrivate', cv.totalYears !== null && cv.publicYears !== null ? String(Math.max(0, Math.round((cv.totalYears - cv.publicYears) * 10) / 10)) : undefined);
-  fill('yearsPublic', cv.publicYears !== null ? String(cv.publicYears) : undefined);
+  fill('experience', cv.experience);
+  if (p.experience.length && !p.yearsManual) {
+    // Worked out from the ticked jobs, up to today, so a job that is still current keeps growing.
+    const t = experienceTotals(p.experience);
+    p.yearsPrivate = formatMonths(t.privateMonths);
+    p.yearsPublic = formatMonths(t.publicMonths);
+    from.yearsPrivate = 'cv';
+    from.yearsPublic = 'cv';
+  } else if (!p.experience.length && cv.totalYears !== null) {
+    // The CV only says "N years of experience" with no dates: use that for the total.
+    fill('yearsPrivate', String(cv.totalYears));
+  }
   fill('languages', cv.languages.slice(0, 5));
   fill('qualifications', cv.qualifications.slice(0, 4).map((q) => ({ school: q.school, qualification: q.text, year: q.year })));
   fill('work', cv.work.slice(0, 3));

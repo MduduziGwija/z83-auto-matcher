@@ -141,8 +141,8 @@ export async function fillZ83(template: ArrayBuffer | Uint8Array, opt: FillOptio
   if (p.businessWithState === 'yes') wrap(c, p1, p.businessDetails, 670, 996, 154, { size: 6.2, lines: 3, leadPx: 10 });
   yesNo(p1, p.relinquish, ROW.relinquish);
 
-  text(c, p1, p.yearsPrivate, 702, 1096, { size: 8.5, center: true, maxPx: 70 });
-  text(c, p1, p.yearsPublic, 782, 1096, { size: 8.5, center: true, maxPx: 85 });
+  text(c, p1, p.yearsPrivate, 702, 1096, { size: 7, center: true, maxPx: 68 });
+  text(c, p1, p.yearsPublic, 782, 1096, { size: 7, center: true, maxPx: 82 });
   text(c, p1, p.regDate, 702, 1142, { size: 8, center: true, maxPx: 70 });
   text(c, p1, p.regNo, 782, 1142, { size: 8, center: true, maxPx: 85 });
 

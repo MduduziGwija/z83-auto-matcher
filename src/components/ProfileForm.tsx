@@ -1,8 +1,9 @@
 import { Plus, Trash2, X, XCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { idDetails } from '../lib/cv';
+import { entryMonths, experienceTotals, formatMonths } from '../lib/experience';
 import type { FilledFrom, Source } from '../lib/profile';
-import type { CvInfo, Profile, YesNo } from '../lib/types';
+import type { CvInfo, ExpEntry, Profile, YesNo } from '../lib/types';
 import SignaturePad from './SignaturePad';
 import { Notice, PrivacyNote, SourceTag } from './ui';
 
@@ -86,6 +87,17 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
     const d = idDetails(digits);
     setProfile({ ...p, idNumber: digits, dob: d && !p.dob ? d.dob : p.dob, gender: d ? d.gender : p.gender });
   };
+
+  // Years come from the ticked jobs (up to today) until the person types their own numbers.
+  const withYears = (exp: ExpEntry[], manual: boolean): Profile => {
+    const t = experienceTotals(exp);
+    return { ...p, experience: exp, yearsManual: manual, yearsPrivate: formatMonths(t.privateMonths), yearsPublic: formatMonths(t.publicMonths) };
+  };
+  const setExp = (id: string, patch: Partial<ExpEntry>) => {
+    const exp = p.experience.map((e) => (e.id === id ? { ...e, ...patch } : e));
+    setProfile(p.yearsManual ? { ...p, experience: exp } : withYears(exp, false));
+  };
+  const totals = experienceTotals(p.experience);
 
   const yn = (k: keyof Profile, q: string, detailsKey?: keyof Profile, detailsLabel = 'Give details') => (
     <div className="qa" key={k}>
@@ -221,9 +233,53 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
         ))}
         {p.work.length < 3 && <AddBtn onClick={() => set('work', [...p.work, { employer: '', post: '', fromMM: '', fromYY: '', toMM: '', toYY: '', reason: '' }])} label="Add job" />}
         </div>
+        <div id="experience" tabIndex={-1} className="expbox">
+          <h3>Years of experience</h3>
+          <p className="hint">
+            Worked out from the jobs on your CV, up to today. Tick the jobs that count and choose public or private for each. Overlapping jobs count once.
+            Public means a government department or other public body; a university or a company counts as private.
+          </p>
+          {p.experience.length === 0 && <Notice kind="warn">We could not find dated jobs on your CV, so type your years below.</Notice>}
+          <ul className="explist">
+            {p.experience.map((e) => (
+              <li key={e.id} className={`expitem ${e.include ? '' : 'expitem-off'}`}>
+                <label className="checkline">
+                  <input type="checkbox" className="check" checked={e.include} onChange={(ev) => setExp(e.id, { include: ev.target.checked })} />
+                  <span>
+                    <strong>{e.post || 'Job'}</strong>
+                    {e.employer && <>, {e.employer}</>}
+                    <br />
+                    <span className="muted">
+                      {e.period} · {formatMonths(entryMonths(e))}
+                      {e.approx && ' (only years given, so about)'}
+                      {e.note && ` · ${e.note}`}
+                    </span>
+                  </span>
+                </label>
+                <div className="field">
+                  <label htmlFor={`sec-${e.id}`} className="sr-only">Sector for {e.post || 'this job'}</label>
+                  <select id={`sec-${e.id}`} className="input" value={e.sector} onChange={(ev) => setExp(e.id, { sector: ev.target.value as ExpEntry['sector'] })}>
+                    <option value="public">Public sector</option>
+                    <option value="private">Private sector</option>
+                  </select>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {p.experience.length > 0 && (
+            <p className="totals">
+              <strong>Counted:</strong> private sector {formatMonths(totals.privateMonths)} · public sector {formatMonths(totals.publicMonths)}
+            </p>
+          )}
+        </div>
         <div className="grid2">
-          <Text id="yearsPrivate" label="Years of experience: private sector" value={p.yearsPrivate} onChange={(v) => set('yearsPrivate', v)} from={from.yearsPrivate} error={err('yearsPrivate')} inputMode="numeric" />
-          <Text id="yearsPublic" label="Years of experience: public sector" value={p.yearsPublic} onChange={(v) => set('yearsPublic', v)} from={from.yearsPublic} inputMode="numeric" />
+          <Text id="yearsPrivate" label="Years of experience: private sector (printed on the Z83)" value={p.yearsPrivate} onChange={(v) => setProfile({ ...p, yearsPrivate: v, yearsManual: true })} from={p.yearsManual ? undefined : from.yearsPrivate} error={err('yearsPrivate')} hint="Calculated from the jobs above. You can type your own." />
+          <Text id="yearsPublic" label="Years of experience: public sector (printed on the Z83)" value={p.yearsPublic} onChange={(v) => setProfile({ ...p, yearsPublic: v, yearsManual: true })} from={p.yearsManual ? undefined : from.yearsPublic} />
+        </div>
+        {p.yearsManual && p.experience.length > 0 && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setProfile(withYears(p.experience, false))}>Recalculate from the jobs above</button>
+        )}
+        <div className="grid2">
           <Text id="regDate" label="Professional registration date (if any)" value={p.regDate} onChange={(v) => set('regDate', v)} tag={false} />
           <Text id="regNo" label="Registration number (if any)" value={p.regNo} onChange={(v) => set('regNo', v)} from={from.regNo} />
         </div>
