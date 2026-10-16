@@ -1,6 +1,6 @@
 import { CheckCircle2, ChevronDown, CircleDot, Pencil, Plus, Search, X, XCircle } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
-import { fmtDate, isClosed } from '../lib/circular';
+import { fmtDate, isClosed, toParagraphs } from '../lib/circular';
 import { DISCLAIMER, allGroups, loadExtraGroups, saveExtraGroups } from '../lib/match';
 import type { CircularInfo, CvInfo, MatchResult, Post } from '../lib/types';
 import { Notice, OutcomeBadge, PrivacyNote, ScoreRing, StatusBadge } from './ui';
@@ -45,6 +45,7 @@ function Mark({ text, q }: { text: string; q: string }) {
 
 export default function Results({ circular, cv, results, selected, setSelected, deptOverride, setDeptOverride, rematch, onBack, onContinue }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [reqOpen, setReqOpen] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [extra, setExtra] = useState(loadExtraGroups());
   const [pair, setPair] = useState('');
@@ -292,12 +293,36 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                 </div>
                 {analysis && !isClosedPost && <ScoreRing score={r.score} status={r.status} />}
               </div>
-              {analysis && !isClosedPost && (
-                <div className="post-bar">
-                  <StatusBadge status={r.status} />
-                  <button type="button" className="btn btn-ghost btn-sm" aria-expanded={isOpen} aria-controls={`why-${p.id}`} onClick={() => setOpen({ ...open, [p.id]: !isOpen })}>
-                    Why this score <ChevronDown size={16} aria-hidden className={isOpen ? 'flip' : ''} />
+              <div className="post-bar">
+                {analysis && !isClosedPost ? <StatusBadge status={r.status} /> : <span />}
+                <span className="post-actions">
+                  <button type="button" className="btn btn-ghost btn-sm" aria-expanded={!!reqOpen[p.id]} aria-controls={`req-${p.id}`} onClick={() => setReqOpen({ ...reqOpen, [p.id]: !reqOpen[p.id] })}>
+                    Requirements <ChevronDown size={16} aria-hidden className={reqOpen[p.id] ? 'flip' : ''} />
                   </button>
+                  {analysis && !isClosedPost && (
+                    <button type="button" className="btn btn-ghost btn-sm" aria-expanded={isOpen} aria-controls={`why-${p.id}`} onClick={() => setOpen({ ...open, [p.id]: !isOpen })}>
+                      Why this score <ChevronDown size={16} aria-hidden className={isOpen ? 'flip' : ''} />
+                    </button>
+                  )}
+                </span>
+              </div>
+              {reqOpen[p.id] && (
+                <div id={`req-${p.id}`} className="why reqpanel">
+                  <h3>Requirements (as written in the circular)</h3>
+                  {p.requirements ? (
+                    toParagraphs(p.requirements).map((t, i) => (
+                      <p key={i} className={/^Job[\s-]*related/i.test(t) ? 'req-head' : undefined}>{t}</p>
+                    ))
+                  ) : (
+                    <p className="muted">We could not pick the requirements out of this post. Please read the full post text below.</p>
+                  )}
+                  <details className="fulltext" open={!p.requirements}>
+                    <summary>Full post text from the circular</summary>
+                    {toParagraphs(p.raw).map((t, i) => (
+                      <p key={i}>{t}</p>
+                    ))}
+                  </details>
+                  <p className="hint">Always check the circular itself. Our text is read automatically and may be incomplete.</p>
                 </div>
               )}
               {analysis && isOpen && !isClosedPost && (

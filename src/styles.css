@@ -217,3 +217,10 @@ button.pill.pill-on { color: var(--on-primary); }
 .switch-on { background: var(--primary); border-color: var(--primary); }
 .switch-knob { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--card); border: 2px solid var(--border); transition: transform .15s ease; }
 .switch-on .switch-knob { transform: translateX(28px); border-color: var(--on-primary); }
+
+.post-actions { display: inline-flex; gap: var(--s1); flex-wrap: wrap; }
+.reqpanel p { margin: var(--s2) 0; }
+.req-head { font-weight: 700; margin-top: var(--s4) !important; }
+.fulltext { margin-top: var(--s4); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: var(--s2) var(--s3); }
+.fulltext summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.fulltext p { font-size: .95rem; color: var(--muted-fg); }

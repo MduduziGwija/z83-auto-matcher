@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCircular, isDeptHeading } from '../src/lib/circular';
+import { parseCircular, isDeptHeading, toParagraphs } from '../src/lib/circular';
 
 const RAW = `PUBLIC SERVICE VACANCY CIRCULAR 41 OF 2026
 Closing date: 30 October 2026 at 16:00
@@ -43,6 +43,15 @@ describe('departments and how to apply', () => {
       ['DOH/45/2026', 'Department of Health', 'Senior Clerk'],
     ]);
   });
+  it('keeps the requirements as written, and the post text stops before the next department', () => {
+    const agri = c.posts.find((p) => p.ref === 'DALRRD/09/2026')!;
+    expect(agri.requirements).toMatch(/National Diploma in Agriculture \(NQF Level 6\)/);
+    const dsac = c.posts[0];
+    expect(dsac.requirements).toMatch(/Minimum of 3 years experience in sport administration/);
+    expect(dsac.requirements).not.toMatch(/ENQUIRIES/);
+    expect(dsac.raw).not.toMatch(/AGRICULTURE, LAND REFORM/);
+    expect(toParagraphs(dsac.requirements).length).toBeGreaterThan(1);
+  });
   it('keeps only email-able posts: flags online-only and no-email posts', () => {
     expect(c.posts.map((p) => [p.ref, p.applyBy, p.email])).toEqual([
       ['DSAC/01/2026', 'email', 'recruit@dsac.gov.za'],
@@ -50,5 +59,24 @@ describe('departments and how to apply', () => {
       ['DOH/44/2026', 'none', ''],
       ['DOH/45/2026', 'email', 'hr@health.gov.za'],
     ]);
+  });
+});
+
+describe('titles when the words before REF NO are only references', () => {
+  it('recovers the title from a POST: label or from the capitals after the reference', () => {
+    const raw = `DEPARTMENT OF PUBLIC WORKS & INFRASTRUCTURE
+Closing date: 23 October 2026
+CONTROL ENGINEERING TECHNOLOGIST: INFRASTRUCTURE DELIVERY REF NO: DPWI 01/09/2026
+Directorate: Delivery R958 776 per annum Applications: e-recruitment-bhisho@ecdpw.gov.za
+POST DPWI 04/09/2026 REF NO: DPWI 04/09/2026 CHIEF ENGINEER Directorate: Roads R1 000 000 per annum Applications: e-recruitment-bhisho@ecdpw.gov.za
+DPWI 04/09/2026 REF NO: DPWI 05/09/2026 POST: ASSISTANT DIRECTOR: ROADS Directorate: Roads R500 000 per annum Applications: e-recruitment-bhisho@ecdpw.gov.za`;
+    const c = parseCircular(raw);
+    expect(c.posts.map((p) => [p.ref, p.title])).toEqual([
+      ['DPWI 01/09/2026', 'Control Engineering Technologist: Infrastructure Delivery'],
+      ['DPWI 04/09/2026', 'Chief Engineer'],
+      ['DPWI 05/09/2026', 'Assistant Director: Roads'],
+    ]);
+    expect(c.posts.every((p) => p.department === 'Department of Public Works & Infrastructure')).toBe(true);
+    expect(c.posts.every((p) => p.applyBy === 'email' && p.email === 'e-recruitment-bhisho@ecdpw.gov.za')).toBe(true);
   });
 });

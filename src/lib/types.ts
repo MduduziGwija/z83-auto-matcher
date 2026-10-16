@@ -35,6 +35,9 @@ export interface Post {
   applyNote: string;
   enquiries: string;
   reqs: Req[];
+  /** The requirements exactly as written in the circular (always shown to the applicant). */
+  requirements: string;
+  /** The whole post text from the circular. */
   raw: string;
 }
 

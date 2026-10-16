@@ -55,14 +55,17 @@ function readTitle(before: string, absStart: number): { title: string; start: nu
   let k = words.length;
   while (k > 0 && !/[a-z]/.test(words[k - 1].w) && /[A-Za-z0-9]/.test(words[k - 1].w.replace(/^[:\-–]+|[:\-–]+$/g, '') || ':')) k--;
   let run = words.slice(k);
-  // Cut everything up to the last heading word (e.g. "OTHER POSTS", "POST 36/02").
+  const hadCapitals = run.length > 0;
+  // Cut everything up to the last heading word (e.g. "OTHER POSTS", "POST 36/02") or reference/date.
   let cut = -1;
   run.forEach((x, i) => {
-    const bare = x.w.replace(/[^A-Za-z0-9/]/g, '');
-    if (TITLE_STOP.has(bare) || /^\d+\/\d+$/.test(bare) || /^[:\-–]+$/.test(x.w)) cut = i;
+    const bare = x.w.replace(/[^A-Za-z0-9/\\-]/g, '');
+    if (TITLE_STOP.has(bare) || /^\d+\/\d+$/.test(bare) || /^[:\-–]+$/.test(x.w) || (/\d/.test(bare) && /[/\\-]/.test(bare))) cut = i;
   });
   run = run.slice(cut + 1);
-  if (run.length === 0) {
+  // A stray number (e.g. the year of a closing date) never starts a title.
+  while (run.length && !/[A-Za-z]/.test(run[0].w)) run.shift();
+  if (run.length === 0 && !hadCapitals) {
     // Title is not in capitals: fall back to the last few words after the last sentence end.
     const tail = words.slice(-8);
     let s = 0;
@@ -181,6 +184,15 @@ export function parseRequirements(reqText: string): Req[] {
     .map((r, i) => ({ ...r, id: `r${i}` }));
 }
 
+/** Split flattened circular text into readable paragraphs (without breaking after initials like "B. Tech"). */
+export function toParagraphs(text: string): string[] {
+  return text
+    .replace(/\s+(?=Job[\s-]*related\s+(?:knowledge|skills?|competenc\w+)\s*:)/gi, '\n')
+    .split(/\n|(?<=[.;])(?<![\s/(,][A-Za-z]\.)\s+(?=[A-Z(])/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 function requirementsSection(seg: string): string {
   const m = seg.match(/Applicants?\s+must|Candidates?\s+must|Minimum\s+requirements?\s*:?|\bRequirements?\s*:|Applicants?\s+should/i);
   if (!m || m.index === undefined) return '';
@@ -233,6 +245,31 @@ function flatten(raw: string): { text: string; heads: Head[] } {
 
 const ONLINE_RE = /\b(?:apply|applying|applications?|submit(?:ted)?|submission)\b[^.]{0,80}\b(?:online|on-line|e-?recruitment|recruitment portal|career(?:s)? portal)\b|\bonline\s+(?:application|system|portal|platform|recruitment)|\bonly\b[^.]{0,25}\bonline\b|\be-?recruitment\b|\bapply\s+online\b/i;
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+const LOOKS_LIKE_REF = (w: string) => /\d/.test(w) && /[/\\-]/.test(w);
+
+/** A title must not be (or contain) a reference number or a date. */
+function validTitle(t: string): boolean {
+  if (!t || t.length < 3) return false;
+  if (!/[A-Za-z]{3}/.test(t)) return false;
+  return !t.split(/\s+/).some(LOOKS_LIKE_REF);
+}
+
+/** Fallbacks when the words before "REF NO" are not a job title (e.g. only the previous post's reference). */
+function recoverTitle(rest: string): string {
+  const label = rest.match(/\b(?:POST|POSITION|JOB\s*TITLE)\s*:\s*(.{3,120}?)(?=\s+(?:REF\b|SALARY|CENTRE|DIRECTORATE|REQUIREMENTS|R\s?\d{3})|$)/i);
+  if (label && validTitle(label[1].trim())) return titleCase(label[1].trim().replace(/[:\s]+$/, ''));
+  // A run of capital letters straight after the reference number.
+  const words = rest.split(/\s+/);
+  const run: string[] = [];
+  for (const w of words.slice(0, 18)) {
+    if (/[a-z]/.test(w) || LOOKS_LIKE_REF(w) || TITLE_STOP.has(w.replace(/[^A-Za-z]/g, ''))) break;
+    if (/^R\d/.test(w)) break;
+    run.push(w);
+  }
+  const t = run.join(' ').replace(/[:\-–\s]+$/, '');
+  return validTitle(t) ? titleCase(t) : '';
+}
 
 export function parseCircular(rawText: string): CircularInfo {
   const { text, heads } = flatten(rawText);
@@ -291,10 +328,13 @@ export function parseCircular(rawText: string): CircularInfo {
     else applyNote = 'No email address was found for this post.';
     const em = email ? [email] : null;
     const enq = seg.match(/ENQUIRIES\s*:?\s*(.+?)(?=\s+APPLICATIONS|\s+NOTE|$)/i) ?? seg.match(/(?:Mr|Ms|Mrs|Dr|Prof)\.?\s+[A-Z]\s+[A-Z][a-z]+\s+Tel[^.]{0,40}/);
-    const reqs = parseRequirements(requirementsSection(rest));
+    const reqSection = requirementsSection(rest);
+    const reqs = parseRequirements(reqSection);
+    const nextHead = heads.find((h) => h.pos > mk.idx && h.pos < segEnd);
+    const rawSeg = nextHead ? text.slice(mk.idx, nextHead.pos).trim() : seg;
     return {
       id: `p${i}`,
-      title: titles[i].title || `Post ${mk.ref}`,
+      title: validTitle(titles[i].title) ? titles[i].title : recoverTitle(rest.startsWith(mk.ref) ? rest.slice(mk.ref.length).trim() : rest) || `Post ${mk.ref}`,
       ref: mk.ref,
       directorate: dir ? dir[1].trim().slice(0, 90) : '',
       salary: sal ? sal[0].replace(/\s+/g, ' ').trim() : '',
@@ -307,7 +347,8 @@ export function parseCircular(rawText: string): CircularInfo {
       department: head ? titleCase(head.name) : '',
       enquiries: enq ? (enq[1] ?? enq[0]).trim().slice(0, 80) : '',
       reqs,
-      raw: seg,
+      requirements: reqSection.trim(),
+      raw: rawSeg,
     };
   });
 
