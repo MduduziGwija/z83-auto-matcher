@@ -1,0 +1,24 @@
+{
+  "_help": "Each group lists qualification fields that government posts often treat as interchangeable. Add your own groups here, or add pairs inside the app.",
+  "groups": [
+    ["Public Administration", "Public Management", "Public Governance", "Public Policy"],
+    ["Property Studies", "Town and Regional Planning", "Urban and Regional Planning", "Real Estate"],
+    ["Information Technology", "Computer Science", "Information Systems", "Software Development", "Computing", "Informatics"],
+    ["Agriculture", "Agricultural Management", "Agricultural Economics", "Agronomy", "Animal Science", "Crop Production"],
+    ["Human Resource Management", "Human Resources", "Industrial Psychology", "Labour Relations", "Personnel Management"],
+    ["Finance", "Accounting", "Financial Management", "Auditing", "Cost and Management Accounting"],
+    ["Supply Chain Management", "Logistics", "Procurement", "Purchasing"],
+    ["Project Management", "Programme Management"],
+    ["Law", "LLB", "Legal Studies", "Jurisprudence"],
+    ["Social Work", "Social Development", "Community Development"],
+    ["Environmental Management", "Environmental Science", "Nature Conservation"],
+    ["Marketing", "Communication", "Public Relations", "Corporate Communication"]
+  ],
+  "skillAliases": {
+    "computer literacy": ["Microsoft Office", "MS Office", "Excel", "Word", "PowerPoint", "Outlook", "computer"],
+    "communication skills": ["communication", "presentation", "report writing", "written", "verbal"],
+    "report writing": ["report", "reports", "reporting"],
+    "project management": ["project", "projects", "programme management"],
+    "driver's license": ["driver", "licence", "license", "code 08", "code 10", "code b", "code eb"]
+  }
+}
