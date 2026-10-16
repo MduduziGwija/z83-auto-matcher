@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { Copy, Download as DownloadIcon, Eye, Loader2, Mail } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { fmtDate } from '../lib/circular';
+import { fmtDate, titleProblem } from '../lib/circular';
 import { NameStyle, emailSubject, pdfName, uniqueNames } from '../lib/filename';
 import type { CircularInfo, Post, Profile } from '../lib/types';
 import { buildApplicationPdf } from '../lib/z83';
@@ -21,6 +21,7 @@ interface Props {
   cvBytes: ArrayBuffer;
   hasReferences: boolean;
   onBack: () => void;
+  onEdit: () => void;
 }
 
 function save(blob: Blob, name: string) {
@@ -36,7 +37,7 @@ function save(blob: Blob, name: string) {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
 
-export default function Download({ circular, posts, profile, cvBytes, hasReferences, onBack }: Props) {
+export default function Download({ circular, posts, profile, cvBytes, hasReferences, onBack, onEdit }: Props) {
   const [built, setBuilt] = useState<Built[]>([]);
   const [busy, setBusy] = useState(true);
   const [style, setStyle] = useState<NameStyle>('ref-title');
@@ -133,7 +134,19 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
           return (
             <li key={b.post.id} className="pack">
               <h2 className="pack-title">{b.post.title}</h2>
-              <p className="post-meta">Ref {b.post.ref} · closes {fmtDate(b.post.closing)}</p>
+              <dl className="printed">
+                <dt>Printed on the Z83</dt>
+                <dd><strong>Position:</strong> {b.post.title}</dd>
+                <dd><strong>Reference:</strong> {b.post.ref}</dd>
+                <dd><strong>Department:</strong> {b.post.department || '(none)'}</dd>
+              </dl>
+              {(titleProblem(b.post.title, b.post.ref) || !b.post.department) && (
+                <Notice kind="warn" title="Please check this before you send">
+                  {titleProblem(b.post.title, b.post.ref) || 'The department is empty.'}{' '}
+                  <button type="button" className="btn btn-link btn-inline" onClick={onEdit}>Go back and correct it</button>
+                </Notice>
+              )}
+              <p className="post-meta">Closes {fmtDate(b.post.closing)}</p>
               {b.error ? (
                 <Notice kind="error" role="alert" title="Could not build this PDF">{b.error} Check that your CV is a normal (not locked) PDF and try again.</Notice>
               ) : (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCircular, isDeptHeading, toParagraphs } from '../src/lib/circular';
+import { parseCircular, isDeptHeading, toParagraphs, titleProblem } from '../src/lib/circular';
 
 const RAW = `PUBLIC SERVICE VACANCY CIRCULAR 41 OF 2026
 Closing date: 30 October 2026 at 16:00
@@ -78,5 +78,26 @@ DPWI 04/09/2026 REF NO: DPWI 05/09/2026 POST: ASSISTANT DIRECTOR: ROADS Director
     ]);
     expect(c.posts.every((p) => p.department === 'Department of Public Works & Infrastructure')).toBe(true);
     expect(c.posts.every((p) => p.applyBy === 'email' && p.email === 'e-recruitment-bhisho@ecdpw.gov.za')).toBe(true);
+  });
+});
+
+describe('titles in different layouts (title on its own line)', () => {
+  const layouts: [string, string, string][] = [
+    ['title on the line above REF NO', 'DEPARTMENT OF HEALTH\nCLINICAL ENGINEER\nREF NO: DOH 12/2026\nSalary R500 000 per annum', 'Clinical Engineer'],
+    ['label line then title line', 'DEPARTMENT OF HEALTH\nPOST DOH 12/2026\nChief Radiographer\nREF NO: DOH 12/2026\nSalary R500 000 per annum', 'Chief Radiographer'],
+    ['mixed case title, ref on same line', 'DEPARTMENT OF HEALTH\nDeputy Director: Quality Assurance REF NO: DOH 12/2026\nSalary R500 000 per annum', 'Deputy Director: Quality Assurance'],
+    ['title after a POST: label on the next line', 'DEPARTMENT OF HEALTH\nREF NO: DOH 12/2026\nPOST: SENIOR ADMINISTRATION OFFICER\nSalary R500 000 per annum', 'Senior Administration Officer'],
+  ];
+  for (const [name, raw, expected] of layouts) {
+    it(name, () => {
+      const c = parseCircular(raw);
+      expect(c.posts[0].title).toBe(expected);
+      expect(titleProblem(c.posts[0].title, c.posts[0].ref)).toBe('');
+    });
+  }
+  it('flags titles that look wrong', () => {
+    expect(titleProblem('Dpwi 04/09/2026', 'DPWI 05/09/2026')).not.toBe('');
+    expect(titleProblem('Post DPWI 04/09/2026', 'DPWI 04/09/2026')).not.toBe('');
+    expect(titleProblem('Clerk', 'X 1/2026')).toBe('');
   });
 });

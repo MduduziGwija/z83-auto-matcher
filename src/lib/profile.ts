@@ -123,6 +123,18 @@ export function validateProfile(p: Profile): { field: keyof Profile; message: st
   ];
   for (const [a, d, label] of details) if (p[a] === 'yes' && !String(p[d]).trim()) e.push({ field: d, message: `Give details of the ${label}.` });
   if (!p.contact) e.push({ field: 'contact', message: 'Enter your contact details (email or phone).' });
+  need('notice', 'Say when you can start, or how much notice you must serve (for example “1 calendar month”).');
+  need('prefLanguage', 'Enter your preferred language for correspondence.');
+  need('method', 'Choose how the Department should contact you.');
+  const langs = p.languages.filter((l) => l.language.trim());
+  if (langs.length === 0) e.push({ field: 'languages', message: 'Add at least one language and say how well you speak and write it.' });
+  else if (langs.some((l) => !l.speak || !l.write)) e.push({ field: 'languages', message: 'Choose good, fair or poor for speaking and for writing, for every language.' });
+  if (!p.qualifications.some((q) => q.qualification.trim())) e.push({ field: 'qualifications', message: 'Add at least one formal qualification (your highest first).' });
+  else if (p.qualifications.some((q) => !q.qualification.trim() || !q.school.trim())) e.push({ field: 'qualifications', message: 'Fill in the school or college and the qualification for every row, or remove the empty row.' });
+  if (!p.work.some((w) => w.employer.trim() || w.post.trim())) e.push({ field: 'work', message: 'Add your work experience (at least your current or last job).' });
+  else if (p.work.some((w) => !w.employer.trim() || !w.post.trim())) e.push({ field: 'work', message: 'Fill in the employer and the post held for every job, or remove the empty row.' });
+  if (!p.yearsPrivate.trim() && !p.yearsPublic.trim()) e.push({ field: 'yearsPrivate', message: 'Enter your years of experience (use 0 if you have none in that sector).' });
+  if (!p.reappointCondition) e.push({ field: 'reappointCondition', message: 'Answer whether a condition prevents your re-appointment (choose No if you were never in the Public Service).' });
   if (!p.signature) e.push({ field: 'signature', message: 'Draw your signature.' });
   if (!p.initials) e.push({ field: 'initials', message: 'Draw your initials.' });
   if (!p.signatureConsent) e.push({ field: 'signatureConsent', message: 'Tick the box to confirm the signature and initials are yours.' });

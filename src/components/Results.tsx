@@ -1,8 +1,8 @@
 import { CheckCircle2, ChevronDown, CircleDot, Pencil, Plus, Search, X, XCircle } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
-import { fmtDate, isClosed, toParagraphs } from '../lib/circular';
+import { fmtDate, isClosed, titleProblem, toParagraphs } from '../lib/circular';
 import { DISCLAIMER, allGroups, loadExtraGroups, saveExtraGroups } from '../lib/match';
-import type { CircularInfo, CvInfo, MatchResult, Post } from '../lib/types';
+import type { CircularInfo, CvInfo, MatchResult, Post, PostEdit } from '../lib/types';
 import { Notice, OutcomeBadge, PrivacyNote, ScoreRing, StatusBadge } from './ui';
 
 interface Props {
@@ -11,8 +11,8 @@ interface Props {
   results: Record<string, MatchResult>;
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
-  deptOverride: Record<string, string>;
-  setDeptOverride: (m: Record<string, string>) => void;
+  overrides: Record<string, PostEdit>;
+  setOverrides: (m: Record<string, PostEdit>) => void;
   rematch: () => void;
   onBack: () => void;
   onContinue: () => void;
@@ -43,7 +43,7 @@ function Mark({ text, q }: { text: string; q: string }) {
   );
 }
 
-export default function Results({ circular, cv, results, selected, setSelected, deptOverride, setDeptOverride, rematch, onBack, onContinue }: Props) {
+export default function Results({ circular, cv, results, selected, setSelected, overrides, setOverrides, rematch, onBack, onContinue }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reqOpen, setReqOpen] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<string | null>(null);
@@ -67,7 +67,11 @@ export default function Results({ circular, cv, results, selected, setSelected, 
     }
   };
 
-  const deptOf = (p: Post) => deptOverride[p.id] ?? (p.department || circular.department);
+  const deptOf = (p: Post) => overrides[p.id]?.department ?? (p.department || circular.department);
+  const titleOf = (p: Post) => overrides[p.id]?.title ?? p.title;
+  const refOf = (p: Post) => overrides[p.id]?.ref ?? p.ref;
+  const problemOf = (p: Post) => titleProblem(titleOf(p), refOf(p));
+  const edit = (p: Post, patch: PostEdit) => setOverrides({ ...overrides, [p.id]: { ...overrides[p.id], ...patch } });
   const closed = (p: Post) => isClosed(p, now);
   const canEmail = (p: Post) => p.applyBy === 'email';
   const selectable = (p: Post) => !closed(p) && canEmail(p);
@@ -83,7 +87,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
       m.set(d, (m.get(d) ?? 0) + 1);
     }
     return [...m.entries()].sort((a, b) => (a[0] === NO_DEPT ? 1 : b[0] === NO_DEPT ? -1 : a[0].localeCompare(b[0])));
-  }, [circular, deptOverride, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [circular, overrides, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -93,7 +97,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
       .filter((p) => (filter === 'all' ? true : filter === 'selected' ? selected.has(p.id) : results[p.id].status === filter))
       .filter((p) => {
         if (!words.length) return true;
-        const hay = `${p.title} ${p.ref} ${deptOf(p)} ${p.directorate} ${p.location} ${p.level}`.toLowerCase();
+        const hay = `${titleOf(p)} ${refOf(p)} ${deptOf(p)} ${p.directorate} ${p.location} ${p.level}`.toLowerCase();
         return words.every((w) => hay.includes(w));
       })
       .sort((a, b) =>
@@ -101,9 +105,9 @@ export default function Results({ circular, cv, results, selected, setSelected, 
         Number(canEmail(b)) - Number(canEmail(a)) ||
         (analysis
           ? results[b.id].score - results[a.id].score
-          : (a.closing?.getTime() ?? Infinity) - (b.closing?.getTime() ?? Infinity) || a.title.localeCompare(b.title)),
+          : (a.closing?.getTime() ?? Infinity) - (b.closing?.getTime() ?? Infinity) || titleOf(a).localeCompare(titleOf(b))),
       );
-  }, [circular, q, filter, dept, showHidden, selected, results, deptOverride, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [circular, q, filter, dept, showHidden, selected, results, overrides, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string) => {
     const s = new Set(selected);
@@ -261,26 +265,43 @@ export default function Results({ circular, cv, results, selected, setSelected, 
               <div className="post-top">
                 <input id={`sel-${p.id}`} type="checkbox" className="check" checked={selected.has(p.id)} disabled={!ok} onChange={() => toggle(p.id)} aria-describedby={`d-${p.id}`} />
                 <div className="post-main">
-                  <label htmlFor={`sel-${p.id}`} className="post-title"><Mark text={p.title} q={q} /></label>
+                  <label htmlFor={`sel-${p.id}`} className="post-title"><Mark text={titleOf(p)} q={q} /></label>
+                  {problemOf(p) && (
+                    <p className="post-meta warnline" role="status">
+                      <span className="tag tag-new">Check position name</span> {problemOf(p)} Please correct it with “Edit details”.
+                    </p>
+                  )}
                   <p className="post-meta" id={`d-${p.id}`}>
-                    Ref <Mark text={p.ref} q={q} />
+                    Ref <Mark text={refOf(p)} q={q} />
                     {p.directorate && <> · {p.directorate}</>}
                     {p.level && <> · Level {p.level}</>}
                     {p.location && <> · {p.location}</>}
                   </p>
                   <p className="post-meta">
-                    {editing === p.id ? (
-                      <span className="row">
-                        <label htmlFor={`dep-${p.id}`} className="sr-only">Department for this post</label>
-                        <input id={`dep-${p.id}`} className="input" autoFocus value={deptOf(p)} onChange={(e) => setDeptOverride({ ...deptOverride, [p.id]: e.target.value })} onBlur={() => setEditing(null)} onKeyDown={(e) => e.key === 'Enter' && setEditing(null)} />
-                      </span>
-                    ) : (
-                      <>
-                        <span className="dept"><Mark text={deptOf(p) || 'Department not found'} q={q} /></span>{' '}
-                        <button type="button" className="btn btn-link btn-inline" onClick={() => setEditing(p.id)} aria-label={`Edit department for ${p.title}`}><Pencil size={14} aria-hidden /> Edit</button>
-                      </>
-                    )}
+                    <span className="dept"><Mark text={deptOf(p) || 'Department not found'} q={q} /></span>{' '}
+                    <button type="button" className="btn btn-link btn-inline" aria-expanded={editing === p.id} onClick={() => setEditing(editing === p.id ? null : p.id)} aria-label={`Edit details for ${titleOf(p)}`}><Pencil size={14} aria-hidden /> Edit details</button>
                   </p>
+                  {editing === p.id && (
+                    <div className="editbox">
+                      <p className="hint">This is what is printed on the Z83. Correct anything that is wrong.</p>
+                      <div className="field">
+                        <label htmlFor={`ed-t-${p.id}`} className="label">Position name</label>
+                        <input id={`ed-t-${p.id}`} className="input" value={titleOf(p)} onChange={(e) => edit(p, { title: e.target.value })} autoComplete="off" />
+                      </div>
+                      <div className="field">
+                        <label htmlFor={`ed-r-${p.id}`} className="label">Reference number</label>
+                        <input id={`ed-r-${p.id}`} className="input" value={refOf(p)} onChange={(e) => edit(p, { ref: e.target.value })} autoComplete="off" />
+                      </div>
+                      <div className="field">
+                        <label htmlFor={`ed-d-${p.id}`} className="label">Department</label>
+                        <input id={`ed-d-${p.id}`} className="input" value={deptOf(p)} onChange={(e) => edit(p, { department: e.target.value })} autoComplete="off" />
+                      </div>
+                      <div className="actions wrap">
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing(null)}>Done</button>
+                        {overrides[p.id] && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { const { [p.id]: _x, ...rest } = overrides; setOverrides(rest); }}>Reset to what the circular says</button>}
+                      </div>
+                    </div>
+                  )}
                   <p className="post-meta">
                     <span className={isClosedPost ? 'tag tag-closed' : 'tag'}>{isClosedPost ? 'Closed' : 'Closes'} {fmtDate(p.closing)}</span>
                     {p.salary && <span className="muted"> · {p.salary}</span>}

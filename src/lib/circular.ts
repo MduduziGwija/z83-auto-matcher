@@ -221,9 +221,11 @@ export function isDeptHeading(line: string): boolean {
 }
 
 /** Collapse the text to one line, remembering where each department heading starts. */
-function flatten(raw: string): { text: string; heads: Head[] } {
+function flatten(raw: string): { text: string; heads: Head[]; lineStarts: number[]; lineTexts: string[] } {
   const lines = raw.split(/\r?\n/).map(normalizeText).filter(Boolean);
   const heads: Head[] = [];
+  const lineStarts: number[] = [];
+  const lineTexts: string[] = [];
   let flat = '';
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
@@ -237,10 +239,12 @@ function flatten(raw: string): { text: string; heads: Head[] } {
       line = name;
     }
     const pos = flat ? flat.length + 1 : 0;
+    lineStarts.push(pos);
+    lineTexts.push(line);
     flat += (flat ? ' ' : '') + line;
     if (name) heads.push({ pos, end: pos + line.length, name: line });
   }
-  return { text: flat, heads };
+  return { text: flat, heads, lineStarts, lineTexts };
 }
 
 const ONLINE_RE = /\b(?:apply|applying|applications?|submit(?:ted)?|submission)\b[^.]{0,80}\b(?:online|on-line|e-?recruitment|recruitment portal|career(?:s)? portal)\b|\bonline\s+(?:application|system|portal|platform|recruitment)|\bonly\b[^.]{0,25}\bonline\b|\be-?recruitment\b|\bapply\s+online\b/i;
@@ -271,8 +275,39 @@ function recoverTitle(rest: string): string {
   return validTitle(t) ? titleCase(t) : '';
 }
 
+const NOT_A_TITLE = /^(?:applications?|enquiries|closing|note|salary|requirements?|duties|directorate|centre|location|please|the department|ref\b)/i;
+
+function stripHeadingWords(l: string): string {
+  const w = l.split(/\s+/);
+  while (w.length && (TITLE_STOP.has(w[0].replace(/[^A-Za-z]/g, '')) || /^\d+\/\d+$/.test(w[0]))) w.shift();
+  return w.join(' ');
+}
+
+function cleanTitleLine(l: string): string {
+  return stripHeadingWords(l)
+    .replace(/^(?:POST|POSITION)\s*(?:[A-Z]{1,8}\s*)?\d[\d/\\\-. ]*\s*[:\-–]?\s*/i, '')
+    .replace(/^(?:POST|POSITION|JOB\s*TITLE)\s*:\s*/i, '')
+    .replace(/\s*(?:REF(?:ERENCE)?\.?\s*(?:NO|NUMBER)?\.?\s*:?)\s*$/i, '')
+    .replace(/^[:\-–\s]+|[:\-–\s]+$/g, '')
+    .trim();
+}
+
+function plausibleTitle(t: string): boolean {
+  return validTitle(t) && t.length <= 120 && t.split(/\s+/).length <= 16 && !/@/.test(t) && !NOT_A_TITLE.test(t) && !isDeptHeading(t);
+}
+
+/** Why a position name should be double-checked by the applicant (empty when it looks fine). */
+export function titleProblem(title: string, ref: string): string {
+  if (!title.trim()) return 'We could not find the position name.';
+  if (ref && title.trim().toLowerCase() === `post ${ref}`.toLowerCase()) return 'We could not find the position name.';
+  if (title.split(/\s+/).some(LOOKS_LIKE_REF)) return 'The position name looks like a reference number or a date.';
+  if (title.length > 120) return 'The position name is very long.';
+  if (/@|applications?\s*:|enquiries/i.test(title)) return 'The position name looks wrong.';
+  return '';
+}
+
 export function parseCircular(rawText: string): CircularInfo {
-  const { text, heads } = flatten(rawText);
+  const { text, heads, lineStarts, lineTexts } = flatten(rawText);
   const refRe = /\bREF(?:ERENCE)?(?:\s*(?:NO|NUMBER|NR|NUM)\b\.?)?\s*[:：.]?\s*/gi;
   const markers: { idx: number; end: number; ref: string }[] = [];
   const seenRef = new Set<string>();
@@ -288,11 +323,31 @@ export function parseCircular(rawText: string): CircularInfo {
   const closing = dates.filter((d) => d.hasTime || d.keyword);
   const emails = [...new Set([...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((m) => m[0]))];
 
+  const lineAt = (idx: number) => {
+    let k = 0;
+    for (let j = 0; j < lineStarts.length; j++) if (lineStarts[j] <= idx) k = j;
+    return k;
+  };
   const titles = markers.map((mk, i) => {
     const prevEnd = i === 0 ? 0 : markers[i - 1].end;
     const lastHead = [...heads].reverse().find((h) => h.end <= mk.idx);
-    const from = Math.max(prevEnd, mk.idx - 220, lastHead ? lastHead.end : 0);
-    return readTitle(text.slice(from, mk.idx), from);
+    const floor = Math.max(prevEnd, lastHead ? lastHead.end : 0);
+    const from = Math.max(floor, mk.idx - 220);
+    const li = lineAt(mk.idx);
+    // 1. The title is usually on the same line as "REF NO" (the PDF's own line structure is the most reliable guide).
+    const same = cleanTitleLine(text.slice(lineStarts[li], mk.idx));
+    if (lineStarts[li] >= floor && plausibleTitle(same)) return { title: titleCase(same), start: lineStarts[li] };
+    // 2. Capital letters straight before "REF NO" (works when the PDF runs everything together on one line).
+    const first = readTitle(text.slice(from, mk.idx), from);
+    if (plausibleTitle(first.title)) return first;
+    // 3. One of the two lines above.
+    for (let k = 1; k <= 2; k++) {
+      const j = li - k;
+      if (j < 0 || lineStarts[j] < floor) break;
+      const cand = cleanTitleLine(lineTexts[j]);
+      if (plausibleTitle(cand)) return { title: titleCase(cand), start: lineStarts[j] };
+    }
+    return first;
   });
 
   const posts: Post[] = markers.map((mk, i) => {
@@ -334,7 +389,7 @@ export function parseCircular(rawText: string): CircularInfo {
     const rawSeg = nextHead ? text.slice(mk.idx, nextHead.pos).trim() : seg;
     return {
       id: `p${i}`,
-      title: validTitle(titles[i].title) ? titles[i].title : recoverTitle(rest.startsWith(mk.ref) ? rest.slice(mk.ref.length).trim() : rest) || `Post ${mk.ref}`,
+      title: plausibleTitle(titles[i].title) ? titles[i].title : recoverTitle(rest.startsWith(mk.ref) ? rest.slice(mk.ref.length).trim() : rest) || `Post ${mk.ref}`,
       ref: mk.ref,
       directorate: dir ? dir[1].trim().slice(0, 90) : '',
       salary: sal ? sal[0].replace(/\s+/g, ' ').trim() : '',

@@ -177,3 +177,10 @@ export interface Profile {
   initials: string; // PNG data URL
   signatureConsent: boolean;
 }
+
+/** Corrections the applicant makes to what was read from the circular. */
+export interface PostEdit {
+  title?: string;
+  ref?: string;
+  department?: string;
+}

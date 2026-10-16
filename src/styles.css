@@ -224,3 +224,13 @@ button.pill.pill-on { color: var(--on-primary); }
 .fulltext { margin-top: var(--s4); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: var(--s2) var(--s3); }
 .fulltext summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
 .fulltext p { font-size: .95rem; color: var(--muted-fg); }
+
+.editbox { background: var(--bg); border: 1px solid var(--primary); border-radius: 10px; padding: var(--s3) var(--s4); margin: var(--s2) 0; }
+.warnline { color: var(--fg); }
+.printed { margin: var(--s2) 0; padding: var(--s2) var(--s3); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.printed dt { font-weight: 700; margin-bottom: var(--s1); }
+.printed dd { margin: 0; overflow-wrap: anywhere; }
+
+.toast { position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 30; width: min(100% - 32px, 640px); display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); background: var(--err-bg); color: var(--fg); border: 2px solid var(--danger); border-radius: var(--radius); font-weight: 700; box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
+.toast span { flex: 1; }
+.section-error { border-left: 4px solid var(--danger); padding-left: var(--s3); }

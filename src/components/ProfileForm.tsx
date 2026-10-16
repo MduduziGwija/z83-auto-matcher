@@ -1,5 +1,5 @@
-import { Plus, Trash2 } from 'lucide-react';
-import { useRef } from 'react';
+import { Plus, Trash2, X, XCircle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { idDetails } from '../lib/cv';
 import type { FilledFrom, Source } from '../lib/profile';
 import type { CvInfo, Profile, YesNo } from '../lib/types';
@@ -14,6 +14,7 @@ interface Props {
   from: FilledFrom;
   cv: CvInfo;
   errors: Err;
+  attempt: number;
   onBack: () => void;
   onContinue: () => void;
   onClear: () => void;
@@ -55,8 +56,28 @@ function Choice<T extends string>({ name, legend, value, options, onChange, from
 
 const YN: [YesNo & ('yes' | 'no'), string][] = [['yes', 'Yes'], ['no', 'No']];
 
-export default function ProfileForm({ profile: p, setProfile, from, cv, errors, onBack, onContinue, onClear }: Props) {
+export default function ProfileForm({ profile: p, setProfile, from, cv, errors, attempt, onBack, onContinue, onClear }: Props) {
   const summary = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState('');
+
+  // Something is unanswered: tell the person, and take them to the first unanswered part.
+  useEffect(() => {
+    if (!attempt || errors.length === 0) return;
+    const first = errors[0];
+    setToast(`${errors.length} thing${errors.length === 1 ? ' is' : 's are'} not filled in. The Z83 cannot be empty, so we took you to the first one.`);
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(String(first.field));
+      const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el?.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+      ((el?.querySelector('input,select,button,canvas') as HTMLElement | null) ?? el)?.focus?.({ preventScroll: true });
+    }, 60);
+    const hide = window.setTimeout(() => setToast(''), 9000);
+    return () => {
+      window.clearTimeout(t);
+      window.clearTimeout(hide);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
   const set = <K extends keyof Profile>(k: K, v: Profile[K]) => setProfile({ ...p, [k]: v });
   const err = (f: keyof Profile) => errors.find((e) => e.field === f)?.message;
 
@@ -77,7 +98,6 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
 
   const submit = () => {
     onContinue();
-    setTimeout(() => summary.current?.focus(), 0);
   };
 
   return (
@@ -87,8 +107,15 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
       <PrivacyNote />
       <p className="hint">Saved in this browser only. Use “Clear saved details” at the bottom to remove it.</p>
 
+      {toast && (
+        <div className="toast" role="alert">
+          <XCircle size={20} aria-hidden />
+          <span>{toast}</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setToast('')} aria-label="Dismiss message"><X size={16} aria-hidden /></button>
+        </div>
+      )}
       {errors.length > 0 && (
-        <div ref={summary} tabIndex={-1} role="alert" className="notice notice-error errsum">
+        <div ref={summary} tabIndex={-1} className="notice notice-error errsum">
           <div>
             <strong className="notice-title">Please fix {errors.length} thing{errors.length === 1 ? '' : 's'} before you continue</strong>
             <ul className="plain">
@@ -136,12 +163,14 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
 
       <div className="card">
         <h2>3. Contact and languages</h2>
-        <Text id="notice" label="If offered the job: when can you start, or how much notice must you serve?" value={p.notice} onChange={(v) => set('notice', v)} from={from.notice} placeholder="e.g. 1 calendar month" />
-        <Text id="prefLanguage" label="Preferred language for correspondence" value={p.prefLanguage} onChange={(v) => set('prefLanguage', v)} tag={false} />
-        <Choice name="method" legend="How should the Department contact you?" value={p.method} onChange={(v) => set('method', v)} options={[['email', 'E-mail'], ['telephone', 'Telephone'], ['post', 'Post'], ['fax', 'Fax']]} />
+        <Text id="notice" label="If offered the job: when can you start, or how much notice must you serve?" value={p.notice} onChange={(v) => set('notice', v)} from={from.notice} error={err('notice')} placeholder="e.g. 1 calendar month" />
+        <Text id="prefLanguage" label="Preferred language for correspondence" value={p.prefLanguage} onChange={(v) => set('prefLanguage', v)} error={err('prefLanguage')} tag={false} />
+        <Choice name="method" legend="How should the Department contact you?" value={p.method} onChange={(v) => set('method', v)} error={err('method')} options={[['email', 'E-mail'], ['telephone', 'Telephone'], ['post', 'Post'], ['fax', 'Fax']]} />
         <Text id="contact" label="Your contact details for that method" value={p.contact} onChange={(v) => set('contact', v)} from={from.contact} error={err('contact')} hint="Example: you@email.com / 082 000 0000" />
+        <div id="languages" tabIndex={-1} className={err('languages') ? 'section-error' : undefined}>
         <h3>Official language proficiency</h3>
         <p className="hint">Use good, fair or poor. Up to 5 languages.{from.languages === 'cv' ? ' Taken from your CV.' : ''}</p>
+        {err('languages') && <p className="error">{err('languages')}</p>}
         {p.languages.map((l, i) => (
           <div className="rowset" key={i}>
             <Text id={`lang${i}`} label="Language" tag={false} value={l.language} onChange={(v) => set('languages', p.languages.map((x, k) => (k === i ? { ...x, language: v } : x)))} />
@@ -151,11 +180,14 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
           </div>
         ))}
         {p.languages.length < 5 && <AddBtn onClick={() => set('languages', [...p.languages, { language: '', speak: 'good', write: 'good' }])} label="Add language" />}
+        </div>
       </div>
 
       <div className="card">
         <h2>4. Qualifications and work</h2>
+        <div id="qualifications" tabIndex={-1} className={err('qualifications') ? 'section-error' : undefined}>
         <p className="hint">Highest qualification first. We took these from your CV{from.qualifications === 'cv' ? '' : ' (or your saved details)'}. Fix anything that looks wrong.</p>
+        {err('qualifications') && <p className="error">{err('qualifications')}</p>}
         {p.qualifications.map((q, i) => (
           <div className="rowset" key={i}>
             <Text id={`qs${i}`} label="School / college" tag={false} value={q.school} onChange={(v) => set('qualifications', p.qualifications.map((x, k) => (k === i ? { ...x, school: v } : x)))} />
@@ -166,10 +198,13 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
         ))}
         {p.qualifications.length < 4 && <AddBtn onClick={() => set('qualifications', [...p.qualifications, { school: '', qualification: '', year: '' }])} label="Add qualification" />}
         {p.qualifications.length === 0 && <Notice kind="warn">We found no qualifications in your CV. Add them here, and add an Education heading to your CV.</Notice>}
+        </div>
         <Text id="currentStudy" label="Current study (institution and qualification), if any" value={p.currentStudy} onChange={(v) => set('currentStudy', v)} tag={false} />
 
+        <div id="work" tabIndex={-1} className={err('work') ? 'section-error' : undefined}>
         <h3>Work experience (most recent first)</h3>
         <p className="hint">The Z83 has room for 3 jobs. Your full CV is attached behind it.</p>
+        {err('work') && <p className="error">{err('work')}</p>}
         {p.work.map((w, i) => (
           <div className="rowset rowset-work" key={i}>
             <Text id={`we${i}`} label="Employer" tag={false} value={w.employer} onChange={(v) => set('work', p.work.map((x, k) => (k === i ? { ...x, employer: v } : x)))} />
@@ -185,13 +220,14 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
           </div>
         ))}
         {p.work.length < 3 && <AddBtn onClick={() => set('work', [...p.work, { employer: '', post: '', fromMM: '', fromYY: '', toMM: '', toYY: '', reason: '' }])} label="Add job" />}
+        </div>
         <div className="grid2">
-          <Text id="yearsPrivate" label="Years of experience: private sector" value={p.yearsPrivate} onChange={(v) => set('yearsPrivate', v)} from={from.yearsPrivate} inputMode="numeric" />
+          <Text id="yearsPrivate" label="Years of experience: private sector" value={p.yearsPrivate} onChange={(v) => set('yearsPrivate', v)} from={from.yearsPrivate} error={err('yearsPrivate')} inputMode="numeric" />
           <Text id="yearsPublic" label="Years of experience: public sector" value={p.yearsPublic} onChange={(v) => set('yearsPublic', v)} from={from.yearsPublic} inputMode="numeric" />
           <Text id="regDate" label="Professional registration date (if any)" value={p.regDate} onChange={(v) => set('regDate', v)} tag={false} />
           <Text id="regNo" label="Registration number (if any)" value={p.regNo} onChange={(v) => set('regNo', v)} from={from.regNo} />
         </div>
-        <Choice name="reappointCondition" legend="Previously in the Public Service: is there a condition that prevents your re-appointment?" value={p.reappointCondition} options={YN} onChange={(v) => set('reappointCondition', v)} hint="Leave blank if you were never employed in the Public Service." />
+        <Choice name="reappointCondition" legend="Previously in the Public Service: is there a condition that prevents your re-appointment?" value={p.reappointCondition} options={YN} onChange={(v) => set('reappointCondition', v)} error={err('reappointCondition')} from={from.reappointCondition} hint="Choose No if you were never employed in the Public Service." />
         {p.reappointCondition === 'yes' && <Text id="reappointDetails" label="Previous department and the condition" value={p.reappointDetails} onChange={(v) => set('reappointDetails', v)} tag={false} />}
       </div>
 

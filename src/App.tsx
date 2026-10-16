@@ -9,7 +9,7 @@ import { parseCv } from './lib/cv';
 import { matchPost } from './lib/match';
 import { PdfReadError, extractText } from './lib/pdfText';
 import { FilledFrom, clearProfile, emptyProfile, loadProfile, mergeCv, saveProfile, validateProfile } from './lib/profile';
-import type { CircularInfo, CvInfo, MatchResult, Profile } from './lib/types';
+import type { CircularInfo, CvInfo, MatchResult, PostEdit, Profile } from './lib/types';
 
 export default function App() {
   const [step, setStep] = useState(0);
@@ -24,10 +24,11 @@ export default function App() {
   const cvBytes = useRef<ArrayBuffer | null>(null);
   const [results, setResults] = useState<Record<string, MatchResult>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [deptOverride, setDeptOverride] = useState<Record<string, string>>({});
+  const [overrides, setOverrides] = useState<Record<string, PostEdit>>({});
   const [profile, setProfile] = useState<Profile>(emptyProfile());
   const [from, setFrom] = useState<FilledFrom>({});
   const [errors, setErrors] = useState<ReturnType<typeof validateProfile>>([]);
+  const [attempt, setAttempt] = useState(0);
 
   const go = useCallback((n: number) => {
     setStep(n);
@@ -74,7 +75,7 @@ export default function App() {
       cvBytes.current = vBytes;
       setCircular(c);
       setCv(v);
-      setDeptOverride({});
+      setOverrides({});
       runMatch(c, v);
       setSelected(new Set());
       const m = mergeCv(loadProfile(), v);
@@ -92,16 +93,29 @@ export default function App() {
 
   // Each Z83 carries the department of its own post (read from the circular, or corrected by the applicant).
   const posts = useMemo(
-    () => (circular ? circular.posts.filter((p) => selected.has(p.id)).map((p) => ({ ...p, department: deptOverride[p.id] ?? (p.department || circular.department) })) : []),
-    [circular, selected, deptOverride],
+    () => (circular ? circular.posts.filter((p) => selected.has(p.id)).map((p) => ({ ...p, title: overrides[p.id]?.title?.trim() || p.title, ref: overrides[p.id]?.ref?.trim() || p.ref, department: overrides[p.id]?.department ?? (p.department || circular.department) })) : []),
+    [circular, selected, overrides],
   );
 
   const toDownload = () => {
     const e = validateProfile(profile);
     setErrors(e);
-    if (e.length) return;
+    if (e.length) {
+      setAttempt((a) => a + 1);
+      return;
+    }
     saveProfile(profile);
     go(3);
+  };
+
+  // The Download step (and so any PDF) is only reachable with a complete Z83.
+  const goChecked = (n: number) => {
+    if (n === 3 && validateProfile(profile).length > 0) {
+      go(2);
+      toDownload();
+      return;
+    }
+    go(n);
   };
 
   return (
@@ -109,7 +123,7 @@ export default function App() {
       <header className="top">
         <div className="wrap">
           <span className="brand">Z83 Auto-Matcher</span>
-          <Stepper step={step} onGo={go} maxStep={maxStep} />
+          <Stepper step={step} onGo={goChecked} maxStep={maxStep} />
         </div>
       </header>
       <main className="wrap main" id="main">
@@ -121,8 +135,8 @@ export default function App() {
             results={results}
             selected={selected}
             setSelected={setSelected}
-            deptOverride={deptOverride}
-            setDeptOverride={setDeptOverride}
+            overrides={overrides}
+            setOverrides={setOverrides}
             rematch={() => runMatch(circular, cv)}
             onBack={() => go(0)}
             onContinue={() => go(2)}
@@ -135,6 +149,7 @@ export default function App() {
             from={from}
             cv={cv}
             errors={errors}
+            attempt={attempt}
             onBack={() => go(1)}
             onContinue={toDownload}
             onClear={() => {
@@ -145,7 +160,7 @@ export default function App() {
           />
         )}
         {step === 3 && circular && cv && cvBytes.current && (
-          <Download circular={circular} posts={posts} profile={profile} cvBytes={cvBytes.current} hasReferences={cv.hasReferences} onBack={() => go(2)} />
+          <Download circular={circular} posts={posts} profile={profile} cvBytes={cvBytes.current} hasReferences={cv.hasReferences} onBack={() => go(2)} onEdit={() => go(1)} />
         )}
       </main>
       <footer className="foot wrap">
