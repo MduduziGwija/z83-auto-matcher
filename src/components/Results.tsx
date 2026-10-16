@@ -20,6 +20,15 @@ interface Props {
 
 type Filter = 'all' | 'strong' | 'partial' | 'low' | 'selected';
 const PAGE = 30;
+const ANALYSIS_KEY = 'z83.showAnalysis';
+
+function loadAnalysis(): boolean {
+  try {
+    return localStorage.getItem(ANALYSIS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
 
 /** Marks the words the user searched for. */
 function Mark({ text, q }: { text: string; q: string }) {
@@ -43,7 +52,18 @@ export default function Results({ circular, cv, results, selected, setSelected, 
   const [dept, setDept] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [limit, setLimit] = useState(PAGE);
+  const [analysis, setAnalysisState] = useState(loadAnalysis);
   const now = new Date();
+
+  const setAnalysis = (on: boolean) => {
+    setAnalysisState(on);
+    if (!on && filter !== 'all' && filter !== 'selected') setFilter('all');
+    try {
+      localStorage.setItem(ANALYSIS_KEY, on ? 'on' : 'off');
+    } catch {
+      /* storage unavailable: the choice just lasts for this visit */
+    }
+  };
 
   const deptOf = (p: Post) => deptOverride[p.id] ?? (p.department || circular.department);
   const closed = (p: Post) => isClosed(p, now);
@@ -51,21 +71,37 @@ export default function Results({ circular, cv, results, selected, setSelected, 
   const selectable = (p: Post) => !closed(p) && canEmail(p);
 
   const hiddenCount = circular.posts.filter((p) => !closed(p) && !canEmail(p)).length;
-  const departments = useMemo(() => [...new Set(circular.posts.map(deptOf).filter(Boolean))].sort(), [circular, deptOverride]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Departments with how many posts each has (only posts that are still open and, unless shown, can be applied for by email).
+  const NO_DEPT = '__none__';
+  const deptCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of circular.posts) {
+      if (closed(p) || (!showHidden && !canEmail(p))) continue;
+      const d = deptOf(p) || NO_DEPT;
+      m.set(d, (m.get(d) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => (a[0] === NO_DEPT ? 1 : b[0] === NO_DEPT ? -1 : a[0].localeCompare(b[0])));
+  }, [circular, deptOverride, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return circular.posts
       .filter((p) => (showHidden ? true : canEmail(p)))
-      .filter((p) => !dept || deptOf(p) === dept)
+      .filter((p) => !dept || (dept === NO_DEPT ? !deptOf(p) : deptOf(p) === dept))
       .filter((p) => (filter === 'all' ? true : filter === 'selected' ? selected.has(p.id) : results[p.id].status === filter))
       .filter((p) => {
         if (!words.length) return true;
         const hay = `${p.title} ${p.ref} ${deptOf(p)} ${p.directorate} ${p.location} ${p.level}`.toLowerCase();
         return words.every((w) => hay.includes(w));
       })
-      .sort((a, b) => Number(closed(a)) - Number(closed(b)) || Number(canEmail(b)) - Number(canEmail(a)) || results[b.id].score - results[a.id].score);
-  }, [circular, q, filter, dept, showHidden, selected, results, deptOverride]); // eslint-disable-line react-hooks/exhaustive-deps
+      .sort((a, b) =>
+        Number(closed(a)) - Number(closed(b)) ||
+        Number(canEmail(b)) - Number(canEmail(a)) ||
+        (analysis
+          ? results[b.id].score - results[a.id].score
+          : (a.closing?.getTime() ?? Infinity) - (b.closing?.getTime() ?? Infinity) || a.title.localeCompare(b.title)),
+      );
+  }, [circular, q, filter, dept, showHidden, selected, results, deptOverride, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string) => {
     const s = new Set(selected);
@@ -106,10 +142,26 @@ export default function Results({ circular, cv, results, selected, setSelected, 
     <section aria-labelledby="res-h">
       <h1 id="res-h">Your matches</h1>
       <p className="lead">
-        {circular.posts.length} post{circular.posts.length === 1 ? '' : 's'} found. {emailable} can be applied for by email{hiddenCount > 0 ? `, and ${hiddenCount} are hidden because they need online or other applications` : ''}. Pick any posts you want to apply for. A low score never blocks you.
+        {circular.posts.length} post{circular.posts.length === 1 ? '' : 's'} found. {emailable} can be applied for by email{hiddenCount > 0 ? `, and ${hiddenCount} are hidden because they need online or other applications` : ''}. Pick any posts you want to apply for.{analysis ? ' A low score never blocks you.' : ''}
       </p>
       <PrivacyNote />
-      <Notice kind="warn" title="This matcher can be wrong">{DISCLAIMER}</Notice>
+
+      <div className="switchrow card">
+        <div>
+          <p className="label" id="analysis-label">Show match analysis</p>
+          <p className="hint" id="analysis-hint">
+            {analysis
+              ? 'On: each post gets a score and a reason. Turn it off if you only want to pick the posts you choose yourself.'
+              : 'Off: posts are listed without scores. Your CV is still used to fill in your Z83.'}
+          </p>
+        </div>
+        <button type="button" role="switch" aria-checked={analysis} aria-labelledby="analysis-label" aria-describedby="analysis-hint" className={`switch ${analysis ? 'switch-on' : ''}`} onClick={() => setAnalysis(!analysis)}>
+          <span className="switch-knob" aria-hidden />
+          <span className="sr-only">{analysis ? 'On' : 'Off'}</span>
+        </button>
+      </div>
+
+      {analysis && <Notice kind="warn" title="This matcher can be wrong">{DISCLAIMER}</Notice>}
 
       {cv.gaps.length > 0 && (
         <Notice kind="warn" title="Things to check on your CV">
@@ -150,24 +202,25 @@ export default function Results({ circular, cv, results, selected, setSelected, 
             <input id="q" type="search" className="input" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder="Job title, reference number, department…" autoComplete="off" />
           </div>
         </div>
-        <div className="choice-row" role="group" aria-label="Filter by match">
-          {([['all', 'All'], ['strong', 'Strong'], ['partial', 'Partial'], ['low', 'Missing requirements'], ['selected', 'Selected']] as [Filter, string][]).map(([f, l]) => (
+        <div className="choice-row" role="group" aria-label="Filter posts">
+          {([['all', 'All'], ['strong', 'Strong'], ['partial', 'Partial'], ['low', 'Missing requirements'], ['selected', 'Selected']] as [Filter, string][])
+            .filter(([f]) => analysis || f === 'all' || f === 'selected')
+            .map(([f, l]) => (
             <button key={f} type="button" className={`pill ${filter === f ? 'pill-on' : ''}`} aria-pressed={filter === f} onClick={() => { setFilter(f); setLimit(PAGE); }}>
               {l} <span className="count">{f === 'all' ? shown.length : counts[f]}</span>
             </button>
           ))}
         </div>
-        {departments.length > 1 && (
-          <div className="field">
-            <label htmlFor="deptf" className="label">Department</label>
-            <select id="deptf" className="input" value={dept} onChange={(e) => { setDept(e.target.value); setLimit(PAGE); }}>
-              <option value="">All departments ({departments.length})</option>
-              {departments.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="field">
+          <label htmlFor="deptf" className="label">Filter by department</label>
+          <select id="deptf" className="input" value={dept} onChange={(e) => { setDept(e.target.value); setLimit(PAGE); }}>
+            <option value="">All departments ({deptCounts.length}), {deptCounts.reduce((n, [, c]) => n + c, 0)} posts</option>
+            {deptCounts.map(([d, c]) => (
+              <option key={d} value={d}>{d === NO_DEPT ? 'Department not found' : d} ({c})</option>
+            ))}
+          </select>
+          {deptCounts.length === 1 && <p className="hint">Only one department was found in this circular.</p>}
+        </div>
         {hiddenCount > 0 && (
           <label className="checkline">
             <input type="checkbox" className="check" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
@@ -236,9 +289,9 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                     <p className="post-meta"><span className="tag tag-new">Not by email</span> {p.applyNote}</p>
                   )}
                 </div>
-                {!isClosedPost && <ScoreRing score={r.score} status={r.status} />}
+                {analysis && !isClosedPost && <ScoreRing score={r.score} status={r.status} />}
               </div>
-              {!isClosedPost && (
+              {analysis && !isClosedPost && (
                 <div className="post-bar">
                   <StatusBadge status={r.status} />
                   <button type="button" className="btn btn-ghost btn-sm" aria-expanded={isOpen} aria-controls={`why-${p.id}`} onClick={() => setOpen({ ...open, [p.id]: !isOpen })}>
@@ -246,7 +299,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                   </button>
                 </div>
               )}
-              {isOpen && !isClosedPost && (
+              {analysis && isOpen && !isClosedPost && (
                 <div id={`why-${p.id}`} className="why">
                   {r.items.length === 0 && <p>We could not read the requirements for this post. Please read the circular yourself.</p>}
                   {groups.map(([h, list]) =>
