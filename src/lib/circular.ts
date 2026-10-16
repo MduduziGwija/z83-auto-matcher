@@ -210,12 +210,37 @@ interface Head {
 
 const HEAD_START = /^(?:the\s+)?(?:department|ministry)\s+of\b|^office\s+of\s+the\b|^(?:the\s+)?presidency\b|^national\s+treasury\b|^provincial\s+(?:treasury|administration)\b|^public\s+service\s+commission\b|^statistics\s+south\s+africa\b|^south\s+african\s+(?:police|revenue|social|national|qualifications)\b/i;
 const NOT_HEAD = /\b(?:is|are|will|invites?|has|have|must|should|please|following|applications?|vacanc\w*|requirements?|duties|enquiries|closing|salary|centre|ref|no)\b|[0-9.:;]/i;
+// Words that make a line a sentence about the posts rather than the name of a department.
+const SENTENCE_WORDS = /\b(?:reserves?|reserved|right|fill|filling|below|above|mentioned|kindly|note|notice|posts?|advertis\w*|candidates?|applicants?|employer|equity|dispute|complaints?|read|submit\w*|attach\w*|certified|copies)\b/i;
+const ADDRESS_START = /[,;:\-–\s]*(?:private\s*bag|privatebag|p\.?\s?o\.?\s*box|postnet|physical\s+address|postal\s+address|tel\b|fax\b|e-?mail|www\.|http).*$/i;
+
+/** "Department of Public Works & Infrastructure, Private BAG X Bloemfontein," -> "Department of Public Works and Infrastructure". */
+export function cleanDeptName(raw: string): string {
+  const n = raw
+    .replace(/\s+/g, ' ')
+    .replace(ADDRESS_START, '')
+    .replace(/\s*&\s*/g, ' and ')
+    .replace(/[,;:\-–\s]+$/g, '')
+    .replace(/^[,;:\-–\s]+/g, '')
+    .trim();
+  return titleCase(n);
+}
+
+/** Key for treating spelling variants of the same department as one. */
+export function deptKey(name: string): string {
+  return cleanDeptName(name).toLowerCase().replace(/\band\b/g, '').replace(/[^a-z0-9]/g, '');
+}
 
 export function isDeptHeading(line: string): boolean {
   const l = line.trim();
   if (l.length < 8 || l.length > 95 || !HEAD_START.test(l)) return false;
   const upper = !/[a-z]/.test(l);
-  if (!upper && NOT_HEAD.test(l)) return false;
+  const cleaned = l.replace(ADDRESS_START, '').trim();
+  if (!upper && (NOT_HEAD.test(cleaned) || SENTENCE_WORDS.test(cleaned))) return false;
+  const words = cleaned.split(/\s+/).length;
+  // Only "Department/Ministry of ..." may be long in mixed case; other names ("National Treasury") must be short.
+  if (!upper && !/^(?:the\s+)?(?:department|ministry)\s+of\b/i.test(cleaned) && words > 5) return false;
+  if (words > 14) return false;
   // Upper-case headings may still be a job title like "DEPARTMENT OF ... MANAGER"; reject those with a duty keyword.
   return !/\b(?:ref|no|post|salary|centre)\b[\s:.]*\d?/i.test(l);
 }
@@ -230,7 +255,7 @@ function flatten(raw: string): { text: string; heads: Head[]; lineStarts: number
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
     let name = '';
-    if (isDeptHeading(line) || (HEAD_START.test(line) && !/[a-z]/.test(line) && line.length <= 95 && !NOT_HEAD.test(line))) {
+    if (isDeptHeading(line)) {
       name = line;
       // A long heading may wrap onto the next line ("... LAND REFORM AND" / "RURAL DEVELOPMENT").
       while (/(?:\band|\bof|&|,)$/i.test(name) && i + 1 < lines.length && !/[a-z]/.test(lines[i + 1]) && name.length < 90) {
@@ -323,6 +348,12 @@ export function parseCircular(rawText: string): CircularInfo {
   const closing = dates.filter((d) => d.hasTime || d.keyword);
   const emails = [...new Set([...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((m) => m[0]))];
 
+  const seenDept = new Map<string, string>();
+  const deptName = (raw: string) => {
+    const key = deptKey(raw);
+    if (!seenDept.has(key)) seenDept.set(key, cleanDeptName(raw));
+    return seenDept.get(key)!;
+  };
   const lineAt = (idx: number) => {
     let k = 0;
     for (let j = 0; j < lineStarts.length; j++) if (lineStarts[j] <= idx) k = j;
@@ -399,7 +430,7 @@ export function parseCircular(rawText: string): CircularInfo {
       email,
       applyBy,
       applyNote,
-      department: head ? titleCase(head.name) : '',
+      department: head ? deptName(head.name) : '',
       enquiries: enq ? (enq[1] ?? enq[0]).trim().slice(0, 80) : '',
       reqs,
       requirements: reqSection.trim(),
@@ -413,7 +444,7 @@ export function parseCircular(rawText: string): CircularInfo {
     text.match(/\bDepartment of (?:the )?[A-Z][A-Za-z&]*(?: (?:and |of |&)?[A-Z][A-Za-z&]*){0,4}/)?.[0] ??
     '';
 
-  const departments = [...new Set(heads.map((h) => titleCase(h.name)))];
+  const departments = [...new Set(heads.map((h) => deptName(h.name)))];
   const subj = text.match(/[^.]*\b(?:subject|quote|state|indicate|reference)[^.]{0,40}\b(?:reference|ref)\s*(?:number|no)?[^.]*(?:subject|heading|header)[^.]*\./i);
   const size = text.match(/maximum of\s*(\d+)\s*(?:megabytes|mb)/i);
 

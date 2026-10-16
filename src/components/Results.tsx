@@ -1,6 +1,6 @@
 import { CheckCircle2, ChevronDown, CircleDot, Pencil, Plus, Search, X, XCircle } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
-import { fmtDate, isClosed, titleProblem, toParagraphs } from '../lib/circular';
+import { deptKey, fmtDate, isClosed, titleProblem, toParagraphs } from '../lib/circular';
 import { DISCLAIMER, allGroups, loadExtraGroups, saveExtraGroups } from '../lib/match';
 import type { CircularInfo, CvInfo, MatchResult, Post, PostEdit } from '../lib/types';
 import { Notice, OutcomeBadge, PrivacyNote, ScoreRing, StatusBadge } from './ui';
@@ -80,20 +80,23 @@ export default function Results({ circular, cv, results, selected, setSelected, 
   // Departments with how many posts each has (only posts that are still open and, unless shown, can be applied for by email).
   const NO_DEPT = '__none__';
   const deptCounts = useMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, { name: string; count: number }>();
     for (const p of circular.posts) {
       if (closed(p) || (!showHidden && !canEmail(p))) continue;
-      const d = deptOf(p) || NO_DEPT;
-      m.set(d, (m.get(d) ?? 0) + 1);
+      const d = deptOf(p);
+      const key = d ? deptKey(d) : NO_DEPT;
+      const cur = m.get(key);
+      if (cur) cur.count += 1;
+      else m.set(key, { name: d || 'Department not found', count: 1 });
     }
-    return [...m.entries()].sort((a, b) => (a[0] === NO_DEPT ? 1 : b[0] === NO_DEPT ? -1 : a[0].localeCompare(b[0])));
+    return [...m.entries()].sort((a, b) => (a[0] === NO_DEPT ? 1 : b[0] === NO_DEPT ? -1 : a[1].name.localeCompare(b[1].name)));
   }, [circular, overrides, showHidden]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return circular.posts
       .filter((p) => (showHidden ? true : canEmail(p)))
-      .filter((p) => !dept || (dept === NO_DEPT ? !deptOf(p) : deptOf(p) === dept))
+      .filter((p) => !dept || (dept === NO_DEPT ? !deptOf(p) : deptKey(deptOf(p)) === dept))
       .filter((p) => (filter === 'all' ? true : filter === 'selected' ? selected.has(p.id) : results[p.id].status === filter))
       .filter((p) => {
         if (!words.length) return true;
@@ -220,9 +223,9 @@ export default function Results({ circular, cv, results, selected, setSelected, 
         <div className="field">
           <label htmlFor="deptf" className="label">Filter by department</label>
           <select id="deptf" className="input" value={dept} onChange={(e) => { setDept(e.target.value); setLimit(PAGE); }}>
-            <option value="">All departments ({deptCounts.length}), {deptCounts.reduce((n, [, c]) => n + c, 0)} posts</option>
-            {deptCounts.map(([d, c]) => (
-              <option key={d} value={d}>{d === NO_DEPT ? 'Department not found' : d} ({c})</option>
+            <option value="">All departments ({deptCounts.length}), {deptCounts.reduce((n, [, v]) => n + v.count, 0)} posts</option>
+            {deptCounts.map(([key, v]) => (
+              <option key={key} value={key}>{v.name} ({v.count})</option>
             ))}
           </select>
           {deptCounts.length === 1 && <p className="hint">Only one department was found in this circular.</p>}

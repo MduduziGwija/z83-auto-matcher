@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCircular, isDeptHeading, toParagraphs, titleProblem } from '../src/lib/circular';
+import { parseCircular, isDeptHeading, toParagraphs, titleProblem, cleanDeptName, deptKey } from '../src/lib/circular';
 
 const RAW = `PUBLIC SERVICE VACANCY CIRCULAR 41 OF 2026
 Closing date: 30 October 2026 at 16:00
@@ -76,7 +76,7 @@ DPWI 04/09/2026 REF NO: DPWI 05/09/2026 POST: ASSISTANT DIRECTOR: ROADS Director
       ['DPWI 04/09/2026', 'Chief Engineer'],
       ['DPWI 05/09/2026', 'Assistant Director: Roads'],
     ]);
-    expect(c.posts.every((p) => p.department === 'Department of Public Works & Infrastructure')).toBe(true);
+    expect(c.posts.every((p) => p.department === 'Department of Public Works and Infrastructure')).toBe(true);
     expect(c.posts.every((p) => p.applyBy === 'email' && p.email === 'e-recruitment-bhisho@ecdpw.gov.za')).toBe(true);
   });
 });
@@ -99,5 +99,44 @@ describe('titles in different layouts (title on its own line)', () => {
     expect(titleProblem('Dpwi 04/09/2026', 'DPWI 05/09/2026')).not.toBe('');
     expect(titleProblem('Post DPWI 04/09/2026', 'DPWI 04/09/2026')).not.toBe('');
     expect(titleProblem('Clerk', 'X 1/2026')).toBe('');
+  });
+});
+
+describe('department names: clean, merge spelling variants, ignore sentences', () => {
+  const raw = `PUBLIC SERVICE VACANCY CIRCULAR 42 OF 2026
+Closing date: 30 October 2026 at 16:00
+DEPARTMENT OF PUBLIC WORKS & INFRASTRUCTURE
+CLERK REF NO: DPWI 01/2026
+Applications: apply to a@dpwi.gov.za
+Department of Public Works and Infrastructure
+SENIOR CLERK REF NO: DPWI 02/2026
+Applications: apply to a@dpwi.gov.za
+Department of Public Works and Infrastructure, Private BAG X Bloemfontein,
+DRIVER REF NO: DPWI 03/2026
+Applications: apply to a@dpwi.gov.za
+National Treasury Reserves the Right NOT to Fill the Below-mentioned Posts,
+ARTISAN REF NO: DPWI 04/2026
+Applications: apply to a@dpwi.gov.za
+NATIONAL TREASURY
+ANALYST REF NO: NT 01/2026
+Applications: apply to nt@treasury.gov.za
+DEPARTMENT OF WOMEN, YOUTH AND PERSONS WITH DISABILITIES
+CLERK REF NO: DWYPD 01/2026
+Applications: apply to w@dwypd.gov.za`;
+  const c = parseCircular(raw);
+  it('merges "&" / "and" / address variants into one department', () => {
+    expect(c.departments).toEqual(['Department of Public Works and Infrastructure', 'National Treasury', 'Department of Women, Youth and Persons With Disabilities']);
+  });
+  it('does not treat a sentence as a department heading', () => {
+    expect(isDeptHeading('National Treasury Reserves the Right NOT to Fill the Below-mentioned Posts,')).toBe(false);
+    expect(isDeptHeading('NATIONAL TREASURY')).toBe(true);
+    const art = c.posts.find((p) => p.ref === 'DPWI 04/2026')!;
+    expect(art.department).toBe('Department of Public Works and Infrastructure');
+    expect(c.posts.find((p) => p.ref === 'NT 01/2026')!.department).toBe('National Treasury');
+  });
+  it('cleans names', () => {
+    expect(cleanDeptName('Department of Public Works and Infrastructure, Private BAG X Bloemfontein,')).toBe('Department of Public Works and Infrastructure');
+    expect(cleanDeptName('DEPARTMENT OF SPORT, ARTS & CULTURE')).toBe('Department of Sport, Arts and Culture');
+    expect(deptKey('Department of Public Works & Infrastructure')).toBe(deptKey('Department of Public Works and Infrastructure'));
   });
 });
