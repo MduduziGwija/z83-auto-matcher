@@ -11,7 +11,7 @@ export const emptyProfile = (): Profile => ({
   resigned: '', resignedDetails: '', illHealth: '', businessWithState: '', businessDetails: '', relinquish: '',
   yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '', notice: '', prefLanguage: 'English',
   method: 'email', contact: '', languages: [], qualifications: [], currentStudy: '', work: [],
-  reappointCondition: '', reappointDetails: '', references: [], signature: '', initials: '', signatureConsent: false,
+  reappointCondition: '', reappointDetails: '', references: [], signature: '', initials: '', signatureConsent: false, cvKey: '',
 });
 
 export function loadProfile(): Profile {
@@ -40,6 +40,15 @@ export function clearProfile(): void {
   }
 }
 
+/** Bump this whenever the CV reader changes, so lists saved from an older reading are re-read. */
+export const CV_PARSER_VERSION = 3;
+
+export function cvKeyOf(cv: CvInfo): string {
+  let h = 5381;
+  for (let i = 0; i < cv.text.length; i++) h = ((h << 5) + h + cv.text.charCodeAt(i)) | 0;
+  return `${CV_PARSER_VERSION}:${(h >>> 0).toString(36)}:${cv.text.length}`;
+}
+
 /** Where each auto-filled field came from, so the screen can say "From your CV — please check". */
 export type Source = 'cv' | 'saved' | 'you';
 
@@ -49,8 +58,14 @@ export type FilledFrom = Partial<Record<keyof Profile, Source>>;
  * Merge CV details into the profile. Anything the person already typed or saved wins,
  * except empty fields, which the CV fills. Returns which fields came from the CV.
  */
-export function mergeCv(saved: Profile, cv: CvInfo): { profile: Profile; from: FilledFrom } {
-  const p: Profile = { ...saved };
+export function mergeCv(savedIn: Profile, cv: CvInfo): { profile: Profile; from: FilledFrom } {
+  // Lists read from a CV belong to that CV: a different CV (or a newer reader) means they are read again.
+  const key = cvKeyOf(cv);
+  const saved: Profile =
+    savedIn.cvKey === key
+      ? savedIn
+      : { ...savedIn, qualifications: [], work: [], references: [], languages: [], currentStudy: '', yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '' };
+  const p: Profile = { ...saved, cvKey: key };
   const from: FilledFrom = {};
   const fill = <K extends keyof Profile>(k: K, v: Profile[K] | undefined | null) => {
     const cur = p[k];
@@ -135,6 +150,8 @@ export function validateProfile(p: Profile): { field: keyof Profile; message: st
   else if (p.work.some((w) => !w.employer.trim() || !w.post.trim())) e.push({ field: 'work', message: 'Fill in the employer and the post held for every job, or remove the empty row.' });
   if (!p.yearsPrivate.trim() && !p.yearsPublic.trim()) e.push({ field: 'yearsPrivate', message: 'Enter your years of experience (use 0 if you have none in that sector).' });
   if (!p.reappointCondition) e.push({ field: 'reappointCondition', message: 'Answer whether a condition prevents your re-appointment (choose No if you were never in the Public Service).' });
+  if (p.references.some((r) => !r.name.trim() || !r.relationship.trim() || !r.tel.trim()))
+    e.push({ field: 'references', message: 'Fill in the name, the relationship to you and the phone number for every referee, or remove the empty row.' });
   if (!p.signature) e.push({ field: 'signature', message: 'Draw your signature.' });
   if (!p.initials) e.push({ field: 'initials', message: 'Draw your initials.' });
   if (!p.signatureConsent) e.push({ field: 'signatureConsent', message: 'Tick the box to confirm the signature and initials are yours.' });

@@ -176,6 +176,8 @@ export interface Profile {
   signature: string; // PNG data URL
   initials: string; // PNG data URL
   signatureConsent: boolean;
+  /** Identifies the CV (and CV-reader version) the CV-derived lists were read from. */
+  cvKey: string;
 }
 
 /** Corrections the applicant makes to what was read from the circular. */

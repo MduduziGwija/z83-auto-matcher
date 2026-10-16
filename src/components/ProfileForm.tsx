@@ -231,8 +231,9 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
         {p.reappointCondition === 'yes' && <Text id="reappointDetails" label="Previous department and the condition" value={p.reappointDetails} onChange={(v) => set('reappointDetails', v)} tag={false} />}
       </div>
 
-      <div className="card">
+      <div className={`card ${err('references') ? 'section-error' : ''}`} id="references" tabIndex={-1}>
         <h2>5. References</h2>
+        {err('references') && <p className="error">{err('references')}</p>}
         {!cv.hasReferences && p.references.length === 0 && (
           <Notice kind="warn" title="Your CV has no references">
             Please update your CV with at least 3 referees (name, relationship, phone number). You can still continue and create your application pack now. You can also type referees below.
@@ -241,7 +242,7 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
         {p.references.map((r, i) => (
           <div className="rowset" key={i}>
             <Text id={`rn${i}`} label="Name" tag={false} value={r.name} onChange={(v) => set('references', p.references.map((x, k) => (k === i ? { ...x, name: v } : x)))} />
-            <Text id={`rr${i}`} label="Relationship to you" tag={false} value={r.relationship} onChange={(v) => set('references', p.references.map((x, k) => (k === i ? { ...x, relationship: v } : x)))} />
+            <Text id={`rr${i}`} label="Relationship to you (e.g. line manager)" tag={false} value={r.relationship} onChange={(v) => set('references', p.references.map((x, k) => (k === i ? { ...x, relationship: v } : x)))} />
             <Text id={`rt${i}`} label="Phone (office hours)" tag={false} value={r.tel} inputMode="tel" onChange={(v) => set('references', p.references.map((x, k) => (k === i ? { ...x, tel: v } : x)))} />
             <RemoveBtn onClick={() => set('references', p.references.filter((_, k) => k !== i))} what="referee" />
           </div>

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { emptyProfile, validateProfile } from '../src/lib/profile';
+import { emptyProfile, mergeCv, validateProfile } from '../src/lib/profile';
+import { parseCv } from '../src/lib/cv';
 import type { Profile } from '../src/lib/types';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -35,5 +36,32 @@ describe('validateProfile: a Z83 cannot go out with blanks', () => {
   });
   it('rejects half-filled rows', () => {
     expect(validateProfile({ ...complete(), work: [{ employer: 'X', post: '', fromMM: '', fromYY: '', toMM: '', toYY: '', reason: '' }] }).map((e) => e.field)).toEqual(['work']);
+  });
+});
+
+describe('referees must be complete', () => {
+  it('needs name, relationship and phone on every row that exists', () => {
+    const half = { ...complete(), references: [{ name: 'Ms Arnold', relationship: '', tel: '0214835395' }] };
+    expect(validateProfile(half).map((e) => e.field)).toEqual(['references']);
+    const full = { ...complete(), references: [{ name: 'Ms Arnold', relationship: 'Line manager', tel: '0214835395' }] };
+    expect(validateProfile(full)).toEqual([]);
+  });
+});
+
+describe('saved lists belong to the CV they were read from', () => {
+  const cvA = parseCv('SAM EXAMPLE\nEducation\nHonours degree in Public Administration | UWC 2024 - 2024\nExperience\nIntern, Department of Health  Nov 2024 – Current\n');
+  const cvB = parseCv('JO OTHER\nEducation\nBTech Engineering | TUT 2018 - 2018\n');
+  it('keeps edits for the same CV and re-reads for a different one', () => {
+    const first = mergeCv(emptyProfile(), cvA).profile;
+    const edited = { ...first, qualifications: [{ school: 'UWC', qualification: 'EDITED', year: '2024' }] };
+    expect(mergeCv(edited, cvA).profile.qualifications[0].qualification).toBe('EDITED');
+    const other = mergeCv(edited, cvB).profile;
+    expect(other.qualifications.map((q) => q.qualification).join()).toMatch(/BTech/);
+    expect(other.work).toEqual([]);
+  });
+  it('re-reads when the CV reader version changed (stale saved data)', () => {
+    const first = mergeCv(emptyProfile(), cvA).profile;
+    const stale = { ...first, cvKey: '1:old', work: [{ employer: 'Western Cape Department of Infrastructure (', post: '', fromMM: '', fromYY: '', toMM: '', toYY: '', reason: '' }] };
+    expect(mergeCv(stale, cvA).profile.work[0].employer).not.toMatch(/\($/);
   });
 });
