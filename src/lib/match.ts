@@ -3,7 +3,7 @@ import type { CvInfo, MatchItem, MatchResult, Outcome, Post, Req } from './types
 import { containsPhrase, coverage, levelOf, norm, tokenSet, tokens } from './text';
 
 export const DISCLAIMER =
-  'This match score and qualification equivalency list may not be fully accurate. You may still qualify even if not shown as a strong match — always check the actual post requirements yourself.';
+  'This matcher can be wrong. It uses basic keyword and rule matching, not AI analysis, which is how this app stays free. The match score and the qualification equivalency list may not be fully accurate. You may still qualify even if a post is not shown as a strong match, so always check the actual post requirements yourself.';
 
 const EXTRA_KEY = 'z83.equivalency.extra';
 

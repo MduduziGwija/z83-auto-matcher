@@ -24,7 +24,7 @@ export default function App() {
   const cvBytes = useRef<ArrayBuffer | null>(null);
   const [results, setResults] = useState<Record<string, MatchResult>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [department, setDepartment] = useState('');
+  const [deptOverride, setDeptOverride] = useState<Record<string, string>>({});
   const [profile, setProfile] = useState<Profile>(emptyProfile());
   const [from, setFrom] = useState<FilledFrom>({});
   const [errors, setErrors] = useState<ReturnType<typeof validateProfile>>([]);
@@ -74,7 +74,7 @@ export default function App() {
       cvBytes.current = vBytes;
       setCircular(c);
       setCv(v);
-      setDepartment(c.department);
+      setDeptOverride({});
       runMatch(c, v);
       setSelected(new Set());
       const m = mergeCv(loadProfile(), v);
@@ -90,7 +90,11 @@ export default function App() {
     }
   };
 
-  const posts = useMemo(() => (circular ? circular.posts.filter((p) => selected.has(p.id)) : []), [circular, selected]);
+  // Each Z83 carries the department of its own post (read from the circular, or corrected by the applicant).
+  const posts = useMemo(
+    () => (circular ? circular.posts.filter((p) => selected.has(p.id)).map((p) => ({ ...p, department: deptOverride[p.id] ?? (p.department || circular.department) })) : []),
+    [circular, selected, deptOverride],
+  );
 
   const toDownload = () => {
     const e = validateProfile(profile);
@@ -117,8 +121,8 @@ export default function App() {
             results={results}
             selected={selected}
             setSelected={setSelected}
-            department={department}
-            setDepartment={setDepartment}
+            deptOverride={deptOverride}
+            setDeptOverride={setDeptOverride}
             rematch={() => runMatch(circular, cv)}
             onBack={() => go(0)}
             onContinue={() => go(2)}
@@ -141,11 +145,12 @@ export default function App() {
           />
         )}
         {step === 3 && circular && cv && cvBytes.current && (
-          <Download circular={circular} posts={posts} profile={profile} department={department} cvBytes={cvBytes.current} hasReferences={cv.hasReferences} onBack={() => go(2)} />
+          <Download circular={circular} posts={posts} profile={profile} cvBytes={cvBytes.current} hasReferences={cv.hasReferences} onBack={() => go(2)} />
         )}
       </main>
       <footer className="foot wrap">
-        <p>Made to help applicants. Always check the circular and the Z83 yourself. Nothing is uploaded: all work happens in your browser.</p>
+        <p>Made by Mduduzi Gwija, to make job applications a bit less frustrating. Always check the circular and the Z83 yourself. Nothing is uploaded: all work happens in your browser.</p>
+        <p>The matcher uses basic rules, not AI, so it can be wrong. That is why this app is free.</p>
       </footer>
     </div>
   );

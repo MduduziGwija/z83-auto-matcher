@@ -4,7 +4,8 @@ import type { Post, Profile, YesNo } from './types';
 /** Coordinates were measured on a 110-dpi render of the official Z83 (top-left origin). */
 const K = 72 / 110;
 const PAGE_H = 841.89;
-const INK = rgb(0.05, 0.1, 0.45);
+// Government forms are completed in black.
+const INK = rgb(0, 0, 0);
 
 // Only characters Helvetica (WinAnsi) can print; anything else becomes "?" instead of crashing.
 function clean(s: string): string {

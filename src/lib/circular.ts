@@ -190,8 +190,52 @@ function requirementsSection(seg: string): string {
   return end > 0 ? after.slice(0, end) : after;
 }
 
+interface Head {
+  pos: number;
+  end: number;
+  name: string;
+}
+
+const HEAD_START = /^(?:the\s+)?(?:department|ministry)\s+of\b|^office\s+of\s+the\b|^(?:the\s+)?presidency\b|^national\s+treasury\b|^provincial\s+(?:treasury|administration)\b|^public\s+service\s+commission\b|^statistics\s+south\s+africa\b|^south\s+african\s+(?:police|revenue|social|national|qualifications)\b/i;
+const NOT_HEAD = /\b(?:is|are|will|invites?|has|have|must|should|please|following|applications?|vacanc\w*|requirements?|duties|enquiries|closing|salary|centre|ref|no)\b|[0-9.:;]/i;
+
+export function isDeptHeading(line: string): boolean {
+  const l = line.trim();
+  if (l.length < 8 || l.length > 95 || !HEAD_START.test(l)) return false;
+  const upper = !/[a-z]/.test(l);
+  if (!upper && NOT_HEAD.test(l)) return false;
+  // Upper-case headings may still be a job title like "DEPARTMENT OF ... MANAGER"; reject those with a duty keyword.
+  return !/\b(?:ref|no|post|salary|centre)\b[\s:.]*\d?/i.test(l);
+}
+
+/** Collapse the text to one line, remembering where each department heading starts. */
+function flatten(raw: string): { text: string; heads: Head[] } {
+  const lines = raw.split(/\r?\n/).map(normalizeText).filter(Boolean);
+  const heads: Head[] = [];
+  let flat = '';
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    let name = '';
+    if (isDeptHeading(line) || (HEAD_START.test(line) && !/[a-z]/.test(line) && line.length <= 95 && !NOT_HEAD.test(line))) {
+      name = line;
+      // A long heading may wrap onto the next line ("... LAND REFORM AND" / "RURAL DEVELOPMENT").
+      while (/(?:\band|\bof|&|,)$/i.test(name) && i + 1 < lines.length && !/[a-z]/.test(lines[i + 1]) && name.length < 90) {
+        name += ' ' + lines[++i];
+      }
+      line = name;
+    }
+    const pos = flat ? flat.length + 1 : 0;
+    flat += (flat ? ' ' : '') + line;
+    if (name) heads.push({ pos, end: pos + line.length, name: line });
+  }
+  return { text: flat, heads };
+}
+
+const ONLINE_RE = /\b(?:apply|applying|applications?|submit(?:ted)?|submission)\b[^.]{0,80}\b(?:online|on-line|e-?recruitment|recruitment portal|career(?:s)? portal)\b|\bonline\s+(?:application|system|portal|platform|recruitment)|\bonly\b[^.]{0,25}\bonline\b|\be-?recruitment\b|\bapply\s+online\b/i;
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
 export function parseCircular(rawText: string): CircularInfo {
-  const text = normalizeText(rawText);
+  const { text, heads } = flatten(rawText);
   const refRe = /\bREF(?:ERENCE)?(?:\s*(?:NO|NUMBER|NR|NUM)\b\.?)?\s*[:：.]?\s*/gi;
   const markers: { idx: number; end: number; ref: string }[] = [];
   const seenRef = new Set<string>();
@@ -209,7 +253,8 @@ export function parseCircular(rawText: string): CircularInfo {
 
   const titles = markers.map((mk, i) => {
     const prevEnd = i === 0 ? 0 : markers[i - 1].end;
-    const from = Math.max(prevEnd, mk.idx - 220);
+    const lastHead = [...heads].reverse().find((h) => h.end <= mk.idx);
+    const from = Math.max(prevEnd, mk.idx - 220, lastHead ? lastHead.end : 0);
     return readTitle(text.slice(from, mk.idx), from);
   });
 
@@ -225,7 +270,26 @@ export function parseCircular(rawText: string): CircularInfo {
     const sal = rest.match(/R\s?\d{1,3}(?:[ ,]\d{3})+(?:\.\d{2})?(?:\s*(?:per annum|p\.?a\.?))?/i);
     const lvl = rest.match(/\((?:Level|Grade)\s*(\d{1,2})\)/i) ?? rest.match(/\b(?:Level|Grade)\s*(\d{1,2})\b/i);
     const loc = rest.match(/(?:Gauteng|Western Cape|Eastern Cape|Northern Cape|KwaZulu-Natal|Free State|Limpopo|Mpumalanga|North West)(?:\s*\([^)]+\))?/i);
-    const em = seg.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+    const headIdx = heads.reduce((k, h, j) => (h.pos <= titles[i].start ? j : k), -1);
+    const head = headIdx >= 0 ? heads[headIdx] : null;
+    const blockStart = head ? head.pos : 0;
+    const blockEnd = headIdx >= 0 && headIdx + 1 < heads.length ? heads[headIdx + 1].pos : text.length;
+    const block = text.slice(blockStart, blockEnd);
+    const firstInBlock = markers.map((_, j) => titles[j].start).find((t) => t >= blockStart) ?? blockEnd;
+    const preamble = text.slice(blockStart, Math.min(firstInBlock, blockEnd));
+    const segEmail = seg.match(EMAIL_RE)?.[0] ?? '';
+    const segOnline = ONLINE_RE.test(seg);
+    const blockEmail = block.match(EMAIL_RE)?.[0] ?? (heads.length === 0 && emails.length === 1 ? emails[0] : '');
+    const blockOnline = ONLINE_RE.test(preamble);
+    let applyBy: Post['applyBy'] = 'none';
+    let email = '';
+    let applyNote = '';
+    if (segEmail) { applyBy = 'email'; email = segEmail; }
+    else if (segOnline) { applyBy = 'online'; applyNote = 'This post must be applied for online on the department’s own system.'; }
+    else if (blockEmail && !(blockOnline && !preamble.match(EMAIL_RE))) { applyBy = 'email'; email = blockEmail; }
+    else if (blockOnline) { applyBy = 'online'; applyNote = 'This department asks for online applications on its own system.'; }
+    else applyNote = 'No email address was found for this post.';
+    const em = email ? [email] : null;
     const enq = seg.match(/ENQUIRIES\s*:?\s*(.+?)(?=\s+APPLICATIONS|\s+NOTE|$)/i) ?? seg.match(/(?:Mr|Ms|Mrs|Dr|Prof)\.?\s+[A-Z]\s+[A-Z][a-z]+\s+Tel[^.]{0,40}/);
     const reqs = parseRequirements(requirementsSection(rest));
     return {
@@ -237,7 +301,10 @@ export function parseCircular(rawText: string): CircularInfo {
       level: lvl ? lvl[1] : '',
       location: loc ? loc[0] : '',
       closing: closingDate,
-      email: em ? em[0] : emails[0] ?? '',
+      email,
+      applyBy,
+      applyNote,
+      department: head ? titleCase(head.name) : '',
       enquiries: enq ? (enq[1] ?? enq[0]).trim().slice(0, 80) : '',
       reqs,
       raw: seg,
@@ -250,12 +317,14 @@ export function parseCircular(rawText: string): CircularInfo {
     text.match(/\bDepartment of (?:the )?[A-Z][A-Za-z&]*(?: (?:and |of |&)?[A-Z][A-Za-z&]*){0,4}/)?.[0] ??
     '';
 
+  const departments = [...new Set(heads.map((h) => titleCase(h.name)))];
   const subj = text.match(/[^.]*\b(?:subject|quote|state|indicate|reference)[^.]{0,40}\b(?:reference|ref)\s*(?:number|no)?[^.]*(?:subject|heading|header)[^.]*\./i);
   const size = text.match(/maximum of\s*(\d+)\s*(?:megabytes|mb)/i);
 
   return {
     posts,
-    department: dept.replace(/\s+/g, ' ').trim(),
+    department: departments[0] ?? titleCase(dept.replace(/\s+/g, ' ').trim()),
+    departments,
     emails,
     subjectRule: subj ? subj[0].trim() : null,
     maxSizeMb: size ? Number(size[1]) : null,

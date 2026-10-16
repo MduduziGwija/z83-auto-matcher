@@ -39,5 +39,6 @@ describe('filenames', () => {
     expect(pdfName('3/3/1/85/2026', 'ICT Specialist (Business Analyst)')).toBe('3-3-1-85-2026 - ICT Specialist (Business Analyst).pdf');
     expect(pdfName('3/3/1/85/2026', 'x', 'ref')).toBe('3-3-1-85-2026.pdf');
     expect(uniqueNames(['a.pdf', 'a.pdf'])).toEqual(['a.pdf', 'a (2).pdf']);
+    expect(pdfName('DSAC/01/2026', 'Deputy Director: Sport Development')).toBe('DSAC-01-2026 - Deputy Director - Sport Development.pdf');
   });
 });

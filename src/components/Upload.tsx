@@ -62,6 +62,14 @@ export default function Upload({ circular, cv, setCircular, setCv, busy, error, 
       <h1 id="up-h">Find posts that fit your CV</h1>
       <p className="lead">Upload this week’s DPSA vacancy circular and your CV. We will check every post, then prepare a Z83 + CV PDF for each one you pick.</p>
       <PrivacyNote />
+      <aside className="about" aria-labelledby="about-h">
+        <h2 id="about-h">Why I made this</h2>
+        <p>
+          Applying for government jobs is frustrating. The same Z83, the same CV, the same details, again and again for every post, and it is hard to know which posts really suit you.
+          I made this app to make that a bit easier. I am still improving it.
+        </p>
+        <p className="about-by">Made by Mduduzi Gwija</p>
+      </aside>
       <div className="slots">
         <DropSlot id="circ" title="1. Vacancy circular (PDF)" help="The DPSA circular, published on Fridays." file={circular} onFile={setCircular} />
         <DropSlot id="cv" title="2. Your CV (PDF)" help="Use a PDF made on a computer or phone, not a photo or scan." file={cv} onFile={setCv} />

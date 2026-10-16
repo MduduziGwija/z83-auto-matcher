@@ -1,8 +1,8 @@
-import { CheckCircle2, ChevronDown, CircleDot, Plus, X, XCircle } from 'lucide-react';
-import { useState } from 'react';
+import { CheckCircle2, ChevronDown, CircleDot, Pencil, Plus, Search, X, XCircle } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
 import { fmtDate, isClosed } from '../lib/circular';
 import { DISCLAIMER, allGroups, loadExtraGroups, saveExtraGroups } from '../lib/match';
-import type { CircularInfo, CvInfo, MatchResult } from '../lib/types';
+import type { CircularInfo, CvInfo, MatchResult, Post } from '../lib/types';
 import { Notice, OutcomeBadge, PrivacyNote, ScoreRing, StatusBadge } from './ui';
 
 interface Props {
@@ -11,27 +11,72 @@ interface Props {
   results: Record<string, MatchResult>;
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
-  department: string;
-  setDepartment: (s: string) => void;
+  deptOverride: Record<string, string>;
+  setDeptOverride: (m: Record<string, string>) => void;
   rematch: () => void;
   onBack: () => void;
   onContinue: () => void;
 }
 
-export default function Results({ circular, cv, results, selected, setSelected, department, setDepartment, rematch, onBack, onContinue }: Props) {
+type Filter = 'all' | 'strong' | 'partial' | 'low' | 'selected';
+const PAGE = 30;
+
+/** Marks the words the user searched for. */
+function Mark({ text, q }: { text: string; q: string }) {
+  const words = q.split(/\s+/).filter((w) => w.length > 1).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!words.length) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${words.join('|')})`, 'ig'));
+  return (
+    <>
+      {parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : <Fragment key={i}>{p}</Fragment>))}
+    </>
+  );
+}
+
+export default function Results({ circular, cv, results, selected, setSelected, deptOverride, setDeptOverride, rematch, onBack, onContinue }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<string | null>(null);
   const [extra, setExtra] = useState(loadExtraGroups());
   const [pair, setPair] = useState('');
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [dept, setDept] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const [limit, setLimit] = useState(PAGE);
   const now = new Date();
-  const openPosts = circular.posts.filter((p) => !isClosed(p, now));
-  const sorted = [...circular.posts].sort((a, b) => Number(isClosed(a, now)) - Number(isClosed(b, now)) || results[b.id].score - results[a.id].score);
+
+  const deptOf = (p: Post) => deptOverride[p.id] ?? (p.department || circular.department);
+  const closed = (p: Post) => isClosed(p, now);
+  const canEmail = (p: Post) => p.applyBy === 'email';
+  const selectable = (p: Post) => !closed(p) && canEmail(p);
+
+  const hiddenCount = circular.posts.filter((p) => !closed(p) && !canEmail(p)).length;
+  const departments = useMemo(() => [...new Set(circular.posts.map(deptOf).filter(Boolean))].sort(), [circular, deptOverride]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const shown = useMemo(() => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return circular.posts
+      .filter((p) => (showHidden ? true : canEmail(p)))
+      .filter((p) => !dept || deptOf(p) === dept)
+      .filter((p) => (filter === 'all' ? true : filter === 'selected' ? selected.has(p.id) : results[p.id].status === filter))
+      .filter((p) => {
+        if (!words.length) return true;
+        const hay = `${p.title} ${p.ref} ${deptOf(p)} ${p.directorate} ${p.location} ${p.level}`.toLowerCase();
+        return words.every((w) => hay.includes(w));
+      })
+      .sort((a, b) => Number(closed(a)) - Number(closed(b)) || Number(canEmail(b)) - Number(canEmail(a)) || results[b.id].score - results[a.id].score);
+  }, [circular, q, filter, dept, showHidden, selected, results, deptOverride]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string) => {
     const s = new Set(selected);
     s.has(id) ? s.delete(id) : s.add(id);
     setSelected(s);
   };
-
+  const selectShown = () => {
+    const s = new Set(selected);
+    shown.filter(selectable).forEach((p) => s.add(p.id));
+    setSelected(s);
+  };
   const addPair = () => {
     const parts = pair.split(/\s*=\s*|\s*≈\s*/).map((x) => x.trim()).filter(Boolean);
     if (parts.length < 2) return;
@@ -48,14 +93,23 @@ export default function Results({ circular, cv, results, selected, setSelected, 
     rematch();
   };
 
+  const emailable = circular.posts.filter((p) => !closed(p) && canEmail(p)).length;
+  const counts: Record<Filter, number> = {
+    all: shown.length,
+    strong: circular.posts.filter((p) => canEmail(p) && results[p.id].status === 'strong').length,
+    partial: circular.posts.filter((p) => canEmail(p) && results[p.id].status === 'partial').length,
+    low: circular.posts.filter((p) => canEmail(p) && results[p.id].status === 'low').length,
+    selected: selected.size,
+  };
+
   return (
     <section aria-labelledby="res-h">
       <h1 id="res-h">Your matches</h1>
       <p className="lead">
-        {circular.posts.length} post{circular.posts.length === 1 ? '' : 's'} found, {openPosts.length} still open. Pick any posts you want to apply for. A low score never blocks you.
+        {circular.posts.length} post{circular.posts.length === 1 ? '' : 's'} found. {emailable} can be applied for by email{hiddenCount > 0 ? `, and ${hiddenCount} are hidden because they need online or other applications` : ''}. Pick any posts you want to apply for. A low score never blocks you.
       </p>
       <PrivacyNote />
-      <Notice kind="info" title="About these scores">{DISCLAIMER}</Notice>
+      <Notice kind="warn" title="This matcher can be wrong">{DISCLAIMER}</Notice>
 
       {cv.gaps.length > 0 && (
         <Notice kind="warn" title="Things to check on your CV">
@@ -67,15 +121,9 @@ export default function Results({ circular, cv, results, selected, setSelected, 
         </Notice>
       )}
 
-      <div className="field">
-        <label htmlFor="dept" className="label">Department that advertised the posts</label>
-        <input id="dept" className="input" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="e.g. Department of Agriculture" autoComplete="off" />
-        <p className="hint">Printed on every Z83. {department ? 'Please check it is correct.' : 'We could not find it in the circular — type it in.'}</p>
-      </div>
-
       <details className="equiv">
         <summary>Qualification equivalency list</summary>
-        <p className="hint">Fields the system treats as interchangeable (for example Public Administration = Public Management). Add your own pairs. They are saved on this device. {DISCLAIMER}</p>
+        <p className="hint">Fields the system treats as interchangeable (for example Public Administration = Public Management). Add your own pairs. They are saved on this device.</p>
         <div className="row">
           <label htmlFor="pair" className="sr-only">New equivalent pair</label>
           <input id="pair" className="input" value={pair} onChange={(e) => setPair(e.target.value)} placeholder="Public Administration = Public Management" onKeyDown={(e) => e.key === 'Enter' && addPair()} />
@@ -94,46 +142,103 @@ export default function Results({ circular, cv, results, selected, setSelected, 
         <p className="hint">{allGroups(extra).length} groups in use.</p>
       </details>
 
-      <div className="bulk">
-        <button type="button" className="btn btn-ghost" onClick={() => setSelected(new Set(openPosts.filter((p) => results[p.id].status !== 'low').map((p) => p.id)))}>Select matches</button>
-        <button type="button" className="btn btn-ghost" onClick={() => setSelected(new Set(openPosts.map((p) => p.id)))}>Select all open</button>
-        <button type="button" className="btn btn-ghost" onClick={() => setSelected(new Set())}>Clear</button>
+      <div className="search card" role="search">
+        <div className="field">
+          <label htmlFor="q" className="label">Search posts</label>
+          <div className="searchbox">
+            <Search size={18} aria-hidden />
+            <input id="q" type="search" className="input" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder="Job title, reference number, department…" autoComplete="off" />
+          </div>
+        </div>
+        <div className="choice-row" role="group" aria-label="Filter by match">
+          {([['all', 'All'], ['strong', 'Strong'], ['partial', 'Partial'], ['low', 'Missing requirements'], ['selected', 'Selected']] as [Filter, string][]).map(([f, l]) => (
+            <button key={f} type="button" className={`pill ${filter === f ? 'pill-on' : ''}`} aria-pressed={filter === f} onClick={() => { setFilter(f); setLimit(PAGE); }}>
+              {l} <span className="count">{f === 'all' ? shown.length : counts[f]}</span>
+            </button>
+          ))}
+        </div>
+        {departments.length > 1 && (
+          <div className="field">
+            <label htmlFor="deptf" className="label">Department</label>
+            <select id="deptf" className="input" value={dept} onChange={(e) => { setDept(e.target.value); setLimit(PAGE); }}>
+              <option value="">All departments ({departments.length})</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {hiddenCount > 0 && (
+          <label className="checkline">
+            <input type="checkbox" className="check" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+            <span>Also show the {hiddenCount} posts that can’t be applied for by email (online systems, hand delivery)</span>
+          </label>
+        )}
       </div>
 
+      <div className="bulk">
+        <button type="button" className="btn btn-secondary btn-sm" onClick={selectShown}>Select all shown</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>Clear selection</button>
+        <span className="muted" role="status">Showing {Math.min(limit, shown.length)} of {shown.length}</span>
+      </div>
+
+      {shown.length === 0 && <Notice kind="info" role="status">No posts match your search. Try fewer words, or clear the filters.</Notice>}
+
       <ul className="posts">
-        {sorted.map((p) => {
+        {shown.slice(0, limit).map((p) => {
           const r = results[p.id];
-          const closed = isClosed(p, now);
+          const isClosedPost = closed(p);
+          const ok = selectable(p);
           const isOpen = !!open[p.id];
           const hard = r.items.filter((i) => i.req.kind === 'qualification' || i.req.kind === 'experience' || i.req.kind === 'licence');
           const soft = r.items.filter((i) => i.req.kind === 'knowledge' || i.req.kind === 'skill');
-          const direct = hard.filter((i) => i.outcome === 'direct');
-          const equiv = hard.filter((i) => i.outcome === 'equivalent');
-          const partial = hard.filter((i) => i.outcome === 'partial');
-          const missing = hard.filter((i) => i.outcome === 'missing');
+          const groups = [
+            ['Matched directly', hard.filter((i) => i.outcome === 'direct')],
+            ['Matched via equivalency', hard.filter((i) => i.outcome === 'equivalent')],
+            ['Partly matched', hard.filter((i) => i.outcome === 'partial')],
+            ['Missing: add to your CV', hard.filter((i) => i.outcome === 'missing')],
+          ] as const;
           const softFound = soft.filter((i) => i.outcome === 'direct' || i.outcome === 'equivalent');
           const softPartial = soft.filter((i) => i.outcome === 'partial');
           const softMissing = soft.filter((i) => i.outcome === 'missing');
           return (
-            <li key={p.id} className={`post ${closed ? 'post-closed' : ''}`}>
+            <li key={p.id} className={`post ${!ok ? 'post-closed' : ''}`}>
               <div className="post-top">
-                <input id={`sel-${p.id}`} type="checkbox" className="check" checked={selected.has(p.id)} disabled={closed} onChange={() => toggle(p.id)} aria-describedby={`d-${p.id}`} />
+                <input id={`sel-${p.id}`} type="checkbox" className="check" checked={selected.has(p.id)} disabled={!ok} onChange={() => toggle(p.id)} aria-describedby={`d-${p.id}`} />
                 <div className="post-main">
-                  <label htmlFor={`sel-${p.id}`} className="post-title">{p.title}</label>
+                  <label htmlFor={`sel-${p.id}`} className="post-title"><Mark text={p.title} q={q} /></label>
                   <p className="post-meta" id={`d-${p.id}`}>
-                    Ref {p.ref}
+                    Ref <Mark text={p.ref} q={q} />
                     {p.directorate && <> · {p.directorate}</>}
                     {p.level && <> · Level {p.level}</>}
                     {p.location && <> · {p.location}</>}
                   </p>
                   <p className="post-meta">
-                    <span className={closed ? 'tag tag-closed' : 'tag'}>{closed ? 'Closed' : 'Closes'} {fmtDate(p.closing)}</span>
+                    {editing === p.id ? (
+                      <span className="row">
+                        <label htmlFor={`dep-${p.id}`} className="sr-only">Department for this post</label>
+                        <input id={`dep-${p.id}`} className="input" autoFocus value={deptOf(p)} onChange={(e) => setDeptOverride({ ...deptOverride, [p.id]: e.target.value })} onBlur={() => setEditing(null)} onKeyDown={(e) => e.key === 'Enter' && setEditing(null)} />
+                      </span>
+                    ) : (
+                      <>
+                        <span className="dept"><Mark text={deptOf(p) || 'Department not found'} q={q} /></span>{' '}
+                        <button type="button" className="btn btn-link btn-inline" onClick={() => setEditing(p.id)} aria-label={`Edit department for ${p.title}`}><Pencil size={14} aria-hidden /> Edit</button>
+                      </>
+                    )}
+                  </p>
+                  <p className="post-meta">
+                    <span className={isClosedPost ? 'tag tag-closed' : 'tag'}>{isClosedPost ? 'Closed' : 'Closes'} {fmtDate(p.closing)}</span>
                     {p.salary && <span className="muted"> · {p.salary}</span>}
                   </p>
+                  {canEmail(p) ? (
+                    <p className="post-meta">Email: <span className="mono">{p.email}</span></p>
+                  ) : (
+                    <p className="post-meta"><span className="tag tag-new">Not by email</span> {p.applyNote}</p>
+                  )}
                 </div>
-                {!closed && <ScoreRing score={r.score} status={r.status} />}
+                {!isClosedPost && <ScoreRing score={r.score} status={r.status} />}
               </div>
-              {!closed && (
+              {!isClosedPost && (
                 <div className="post-bar">
                   <StatusBadge status={r.status} />
                   <button type="button" className="btn btn-ghost btn-sm" aria-expanded={isOpen} aria-controls={`why-${p.id}`} onClick={() => setOpen({ ...open, [p.id]: !isOpen })}>
@@ -141,10 +246,10 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                   </button>
                 </div>
               )}
-              {isOpen && !closed && (
+              {isOpen && !isClosedPost && (
                 <div id={`why-${p.id}`} className="why">
                   {r.items.length === 0 && <p>We could not read the requirements for this post. Please read the circular yourself.</p>}
-                  {([['Matched directly', direct], ['Matched via equivalency', equiv], ['Partly matched', partial], ['Missing: add to your CV', missing]] as const).map(([h, list]) =>
+                  {groups.map(([h, list]) =>
                     list.length ? (
                       <div key={h}>
                         <h3>{h}</h3>
@@ -181,6 +286,11 @@ export default function Results({ circular, cv, results, selected, setSelected, 
           );
         })}
       </ul>
+      {limit < shown.length && (
+        <div className="actions">
+          <button type="button" className="btn btn-secondary" onClick={() => setLimit(limit + PAGE)}>Show {Math.min(PAGE, shown.length - limit)} more</button>
+        </div>
+      )}
 
       <div className="actions sticky">
         <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>

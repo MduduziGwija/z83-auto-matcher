@@ -5,6 +5,7 @@ import { fmtDate } from '../lib/circular';
 import { NameStyle, emailSubject, pdfName, uniqueNames } from '../lib/filename';
 import type { CircularInfo, Post, Profile } from '../lib/types';
 import { buildApplicationPdf } from '../lib/z83';
+import { PackItem, buildDetailsText } from '../lib/emailText';
 import { Notice, PrivacyNote } from './ui';
 
 interface Built {
@@ -17,7 +18,6 @@ interface Props {
   circular: CircularInfo;
   posts: Post[];
   profile: Profile;
-  department: string;
   cvBytes: ArrayBuffer;
   hasReferences: boolean;
   onBack: () => void;
@@ -36,7 +36,7 @@ function save(blob: Blob, name: string) {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
 
-export default function Download({ circular, posts, profile, department, cvBytes, hasReferences, onBack }: Props) {
+export default function Download({ circular, posts, profile, cvBytes, hasReferences, onBack }: Props) {
   const [built, setBuilt] = useState<Built[]>([]);
   const [busy, setBusy] = useState(true);
   const [style, setStyle] = useState<NameStyle>('ref-title');
@@ -55,7 +55,7 @@ export default function Download({ circular, posts, profile, department, cvBytes
         const tpl = await res.arrayBuffer();
         for (const post of posts) {
           try {
-            const r = await buildApplicationPdf(tpl, cvBytes, { post, department, profile });
+            const r = await buildApplicationPdf(tpl, cvBytes, { post, department: post.department, profile });
             out.push({ post, bytes: r.bytes });
           } catch (e) {
             out.push({ post, error: e instanceof Error ? e.message : 'Could not build this PDF.' });
@@ -69,15 +69,20 @@ export default function Download({ circular, posts, profile, department, cvBytes
         setBusy(false);
       }
     })();
-  }, [posts, profile, department, cvBytes]);
+  }, [posts, profile, cvBytes]);
 
   const names = uniqueNames(built.map((b) => pdfName(b.post.ref, b.post.title, style)));
   const ok = built.filter((b) => b.bytes);
 
   const asBlob = (b: Built) => new Blob([b.bytes as BlobPart], { type: 'application/pdf' });
+  const items: PackItem[] = built.map((b, i) => ({ post: b.post, fileName: names[i], subject: emailSubject(b.post.ref, b.post.title), to: b.post.email }));
+  const detailsText = () => buildDetailsText(profile, items.filter((_, i) => built[i].bytes));
+  const DETAILS_NAME = 'Email details (copy and paste).txt';
+  const saveText = () => save(new Blob([detailsText()], { type: 'text/plain;charset=utf-8' }), DETAILS_NAME);
   const zipAll = async () => {
     const zip = new JSZip();
     built.forEach((b, i) => b.bytes && zip.file(names[i], b.bytes));
+    zip.file(DETAILS_NAME, detailsText());
     const blob = await zip.generateAsync({ type: 'blob' });
     save(blob, `Z83 applications - ${new Date().toISOString().slice(0, 10)}.zip`);
   };
@@ -157,12 +162,18 @@ export default function Download({ circular, posts, profile, department, cvBytes
         })}
       </ul>
 
+      <div className="card">
+        <h2>Email details to copy and paste</h2>
+        <p>A text file with your details, the correct email address, subject line and a short message for each post. It is also inside the ZIP.</p>
+        <button type="button" className="btn btn-secondary" onClick={saveText} disabled={ok.length === 0}><DownloadIcon size={18} aria-hidden /> Download email details (.txt)</button>
+      </div>
+
       {circular.subjectRule && <Notice kind="info" title="What the circular says about applying">{circular.subjectRule}</Notice>}
 
       <div className="actions sticky">
         <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
-        {ok.length > 1 && (
-          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> Download all ({ok.length}) as ZIP</button>
+        {ok.length > 0 && (
+          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> Download all as ZIP (PDFs + email details)</button>
         )}
       </div>
     </section>

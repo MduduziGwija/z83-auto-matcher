@@ -3,10 +3,12 @@ export type NameStyle = 'ref-title' | 'ref' | 'title';
 /** Make a name that is safe on Windows, Android and macOS and in email attachments. */
 export function safeName(s: string, max = 110): string {
   return s
+    .replace(/\s*:\s*/g, ' - ')
     .replace(/[\\/:*?"<>|]+/g, '-')
     .replace(/[\u0000-\u001f]/g, '')
     .replace(/\s+/g, ' ')
     .replace(/-{2,}/g, '-')
+    .replace(/\s+-\s+-\s+/g, ' - ')
     .replace(/^[\s.\-]+|[\s.\-]+$/g, '')
     .slice(0, max)
     .trim();

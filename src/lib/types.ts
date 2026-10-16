@@ -22,12 +22,17 @@ export interface Post {
   id: string;
   title: string;
   ref: string;
+  /** Department that advertised this post (read from the heading above it in the circular). */
+  department: string;
   directorate: string;
   salary: string;
   level: string;
   location: string;
   closing: Date | null;
   email: string;
+  /** How the circular says to apply: by email (what this app supports), only online, or no email address found. */
+  applyBy: 'email' | 'online' | 'none';
+  applyNote: string;
   enquiries: string;
   reqs: Req[];
   raw: string;
@@ -36,6 +41,7 @@ export interface Post {
 export interface CircularInfo {
   posts: Post[];
   department: string;
+  departments: string[];
   emails: string[];
   /** Instruction in the circular about how to name / label the application, if found. */
   subjectRule: string | null;

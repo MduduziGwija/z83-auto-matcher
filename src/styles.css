@@ -193,3 +193,19 @@ ul.plain { margin: var(--s1) 0 0; padding-left: 1.2em; }
 .chip-strong { background: var(--ok-bg); }
 .chip-partial { background: var(--warn-bg); }
 .chip-low { background: var(--err-bg); }
+
+.searchbox { position: relative; display: flex; align-items: center; }
+.searchbox svg { position: absolute; left: 14px; color: var(--muted-fg); pointer-events: none; }
+.searchbox .input { padding-left: 42px; }
+.search .choice-row { margin-bottom: var(--s4); }
+.pill .count { margin-left: var(--s2); font-weight: 400; opacity: .85; }
+button.pill { font: inherit; color: inherit; }
+mark { background: #fde68a; color: #111827; border-radius: 3px; padding: 0 2px; }
+.btn-inline { min-height: 32px; padding: 0 var(--s2); font-size: .9rem; display: inline-flex; align-items: center; gap: 4px; }
+.dept { font-weight: 700; color: var(--fg); }
+
+.about { background: var(--card); border: 1px solid var(--border); border-left: 6px solid var(--primary); border-radius: var(--radius); padding: var(--s4) var(--s5); margin-block: var(--s5); max-width: 62ch; }
+.about h2 { font-size: 1.1rem; margin-bottom: var(--s2); }
+.about p { margin-bottom: var(--s2); }
+.about-by { font-weight: 700; margin-bottom: 0; }
+button.pill.pill-on { color: var(--on-primary); }
