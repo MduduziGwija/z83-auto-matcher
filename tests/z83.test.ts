@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { it, expect } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { buildApplicationPdf } from '../src/lib/z83';
@@ -30,5 +30,6 @@ it('fills and merges', async () => {
     post: { title: 'ICT Specialist (Business Analyst)', ref: '3/3/1/85/2026' }, department: 'Department of Agriculture (DOA)', profile: p,
   });
   expect(r.pages).toBe(3);
+  mkdirSync('tests/out', { recursive: true });
   writeFileSync('tests/out/filled.pdf', r.bytes);
 });
