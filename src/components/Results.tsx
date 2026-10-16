@@ -22,11 +22,12 @@ type Filter = 'all' | 'strong' | 'partial' | 'low' | 'selected';
 const PAGE = 30;
 const ANALYSIS_KEY = 'z83.showAnalysis';
 
+/** Off by default: the analysis only shows if the person has switched it on. */
 function loadAnalysis(): boolean {
   try {
-    return localStorage.getItem(ANALYSIS_KEY) !== 'off';
+    return localStorage.getItem(ANALYSIS_KEY) === 'on';
   } catch {
-    return true;
+    return false;
   }
 }
 
