@@ -1,6 +1,6 @@
 import equivalency from '../data/equivalency.json';
 import type { CvInfo, MatchItem, MatchResult, Outcome, Post, Req } from './types';
-import { containsPhrase, coverage, levelOf, norm, tokenSet } from './text';
+import { containsPhrase, coverage, levelOf, norm, tokenSet, tokens } from './text';
 
 export const DISCLAIMER =
   'This match score and qualification equivalency list may not be fully accurate. You may still qualify even if not shown as a strong match — always check the actual post requirements yourself.';
@@ -43,11 +43,13 @@ interface Ctx {
 
 function makeCtx(cv: CvInfo, groups: Groups): Ctx {
   const qualText = cv.qualifications.map((q) => `${q.text} ${q.school}`).join(' \n ');
-  return { cv, cvNorm: norm(cv.text), cvTokens: tokenSet(cv.text), qualNorm: norm(qualText || cv.text), groups };
+  // Fields of study are only looked for in the qualification lines, never in the whole CV
+  // (a module in a degree, or a skill, is not a qualification).
+  return { cv, cvNorm: norm(cv.text), cvTokens: tokenSet(cv.text), qualNorm: norm(qualText), groups };
 }
 
 function fieldMatch(field: string, ctx: Ctx): { kind: 'direct' | 'equivalent' | 'none'; via?: string } {
-  if (containsPhrase(ctx.qualNorm, field) || containsPhrase(ctx.cvNorm, field) || coverage(field, tokenSet(ctx.qualNorm)) >= 0.99) return { kind: 'direct' };
+  if (containsPhrase(ctx.qualNorm, field) || coverage(field, tokenSet(ctx.qualNorm)) >= 0.99) return { kind: 'direct' };
   for (const g of ctx.groups) {
     if (!g.some((m) => norm(m) === norm(field))) continue;
     for (const alt of g) {
@@ -59,7 +61,7 @@ function fieldMatch(field: string, ctx: Ctx): { kind: 'direct' | 'equivalent' | 
 }
 
 function bestLevel(cv: CvInfo): number {
-  return cv.qualifications.reduce((m, q) => Math.max(m, q.level), levelOf(cv.text.slice(0, 0)));
+  return cv.qualifications.reduce((m, q) => Math.max(m, q.level), 0);
 }
 
 function matchQualification(r: Req, ctx: Ctx): MatchItem {
@@ -95,26 +97,91 @@ function matchQualification(r: Req, ctx: Ctx): MatchItem {
     : { req: r, outcome: 'missing', evidence: `We did not find ${r.fields.join(' / ')} in your CV.`, advice: `Add the qualification if you have it: ${r.text}.` };
 }
 
+/** Rough seniority of a job title, from intern (1) up to director (6). */
+const RANKS: [RegExp, number][] = [
+  [/\b(chief director|director general|general manager|executive|head of department)\b/, 6],
+  [/\b(deputy director|senior manager|director)\b/, 5],
+  [/\b(assistant director|manager|head of|middle management)\b/, 4],
+  [/\b(senior|supervisor|supervisory|team leader|team lead|specialist|coordinator|lead)\b/, 3],
+  [/\b(officer|administrator|practitioner|analyst|developer|engineer|technician|accountant|advisor|adviser|consultant|lecturer|planner|auditor)\b/, 2],
+  [/\b(intern|trainee|learner|learnership|student|volunteer|clerk|assistant|invigilator|scriber|junior|graduate)\b/, 1],
+];
+export function titleRank(title: string): number {
+  const t = norm(title);
+  for (const [re, r] of RANKS) if (re.test(t)) return r;
+  return 0;
+}
+const SENIORITY_NEED: [RegExp, number, string][] = [
+  [/chief director/, 6, 'Chief Director'],
+  [/deputy director|senior manager|senior management/, 5, 'Deputy Director / Senior Manager'],
+  [/assistant director|middle management|\bmms\b/, 4, 'Assistant Director'],
+  [/director|manager|\bsms\b|managerial/, 4, 'management'],
+  [/supervis/, 3, 'supervisory'],
+];
+function seniorityNeed(sen: string): { rank: number; label: string } | null {
+  for (const [re, rank, label] of SENIORITY_NEED) if (re.test(sen)) return { rank, label };
+  return null;
+}
+
 function matchExperience(r: Req, ctx: Ctx): MatchItem {
   const need = r.years ?? 0;
   const have = ctx.cv.totalYears;
-  const topic = r.topic ?? '';
-  let cov = topic ? coverage(topic, ctx.cvTokens) : 1;
-  // Allow skill aliases to help (e.g. "project management" -> "projects").
-  for (const [k, alts] of Object.entries(ALIASES)) if (topic && norm(topic).includes(k) && alts.some((a) => containsPhrase(ctx.cvNorm, a))) cov = Math.max(cov, 0.7);
+  const notes: string[] = [];
+  const advice: string[] = [];
+  let cap: Outcome = 'direct';
+  let missing = false;
+
+  // 1. Years
   const yearsOk = have === null ? null : have >= need;
-  let outcome: Outcome;
-  if (yearsOk && cov >= 0.5) outcome = 'direct';
-  else if ((yearsOk && cov >= 0.25) || (yearsOk === null && cov >= 0.5) || (have !== null && have >= need * 0.7 && cov >= 0.5)) outcome = 'partial';
-  else outcome = 'missing';
-  const yrs = have === null ? 'We could not work out your total years of experience.' : `Your CV shows about ${have} years of experience.`;
-  const rel = topic ? (cov >= 0.5 ? 'Your CV mentions this kind of work.' : cov >= 0.25 ? 'Your CV only partly mentions this kind of work.' : 'We did not find this kind of work in your CV.') : '';
-  return {
-    req: r,
-    outcome,
-    evidence: `${yrs} ${rel}`.trim(),
-    advice: outcome === 'direct' ? '' : `Show clearly on your CV how many years you have in: ${topic || r.text}. Use start and end dates for each job.`,
-  };
+  notes.push(have === null ? 'We could not work out your total years of experience.' : `Your CV shows about ${have} years of experience in total.`);
+  if (yearsOk === false) {
+    if (have! >= need * 0.7) cap = 'partial';
+    else missing = true;
+    advice.push(`The post asks for ${need} years. Show every job with start and end dates on your CV.`);
+  }
+
+  // 2. The kind of work: at least one alternative must really appear in the CV
+  if (r.domain?.length) {
+    let best = 0;
+    let bestPhrase = '';
+    for (const alt of r.domain) {
+      const nTok = tokens(alt).length;
+      let c = coverage(alt, ctx.cvTokens);
+      if (nTok < 2 && c < 1) c = 0;
+      const viaAlias = Object.entries(ALIASES).some(([k, alts]) => norm(alt).includes(k) && alts.some((a) => containsPhrase(ctx.cvNorm, a)));
+      if (viaAlias) c = Math.max(c, 0.99);
+      if (c > best) {
+        best = c;
+        bestPhrase = alt;
+      }
+    }
+    if (best >= 0.99) notes.push(`Your CV mentions ${bestPhrase}.`);
+    else if (best >= 0.67) {
+      cap = cap === 'direct' ? 'partial' : cap;
+      notes.push(`Your CV only partly mentions this kind of work (${bestPhrase}).`);
+      advice.push(`Spell out your experience in: ${r.domain.join(' / ')}.`);
+    } else {
+      missing = true;
+      notes.push(`We did not find this kind of work in your CV: ${r.domain.join(' / ')}.`);
+      advice.push(`This post needs experience in ${r.domain.join(' / ')}. Only apply if you have it, and then describe it on your CV.`);
+    }
+  }
+
+  // 3. Seniority (for example "2 years at Assistant Director level")
+  const need2 = r.seniority ? seniorityNeed(r.seniority) : null;
+  if (need2) {
+    const ranks = ctx.cv.work.map((w) => titleRank(`${w.post} ${w.employer}`));
+    const top = ranks.length ? Math.max(...ranks) : 0;
+    if (top >= need2.rank) notes.push(`Your CV shows a job title at or near ${need2.label} level.`);
+    else {
+      cap = cap === 'direct' ? 'partial' : cap;
+      notes.push(`The post asks for ${need2.label} level experience. We could not see a title at that level on your CV.`);
+      advice.push(`Show your job titles and what you were responsible for. If you did not work at ${need2.label} level, this post may not suit you.`);
+    }
+  }
+
+  const outcome: Outcome = missing ? 'missing' : cap;
+  return { req: r, outcome, evidence: notes.join(' '), advice: outcome === 'direct' ? '' : advice.join(' ') };
 }
 
 function matchLicence(r: Req, ctx: Ctx): MatchItem {
@@ -129,7 +196,7 @@ function matchSkill(r: Req, ctx: Ctx): MatchItem {
   const viaAlias = key ? ALIASES[key].some((a) => containsPhrase(ctx.cvNorm, a)) : false;
   if (direct >= 0.6) return { req: r, outcome: 'direct', evidence: 'Found in your CV.', advice: '' };
   if (viaAlias) return { req: r, outcome: 'equivalent', evidence: 'Related words found in your CV.', advice: '' };
-  if (direct >= 0.3) return { req: r, outcome: 'partial', evidence: 'Partly found in your CV.', advice: `Use the words "${r.text}" on your CV if they describe your work.` };
+  if (direct >= 0.5 && tokens(r.text).length >= 3) return { req: r, outcome: 'partial', evidence: 'Partly found in your CV.', advice: `Use the words "${r.text}" on your CV if they describe your work.` };
   return { req: r, outcome: 'missing', evidence: 'Not found in your CV.', advice: `If you have this, add "${r.text}" with an example to your CV.` };
 }
 
@@ -153,6 +220,6 @@ export function matchPost(post: Post, cv: CvInfo, groups: Groups = allGroups()):
   }
   const score = den === 0 ? 0 : Math.round((num / den) * 100);
   const hardMissing = items.some((i) => (i.req.kind === 'qualification' || i.req.kind === 'experience') && i.outcome === 'missing');
-  const status: MatchResult['status'] = items.length === 0 ? 'low' : score >= 75 && !hardMissing ? 'strong' : score >= 45 ? 'partial' : 'low';
+  const status: MatchResult['status'] = items.length === 0 ? 'low' : hardMissing ? (score >= 60 ? 'partial' : 'low') : score >= 75 ? 'strong' : score >= 45 ? 'partial' : 'low';
   return { postId: post.id, score, status, items };
 }

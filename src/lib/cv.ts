@@ -172,6 +172,15 @@ function mergedMonths(ranges: { from: number; to: number }[]): number {
 
 const isBullet = (l: string) => /^\s*[•·▪●○\-*–]\s/.test(l) || l.length > 90;
 
+/** Split on separators but keep commas that sit inside brackets, e.g. "ABC Software (Pty) Ltd". */
+function splitParts(line: string): string[] {
+  const guarded = line.replace(/\(([^)]*)\)/g, (m) => m.replace(/,/g, '\u0001'));
+  return guarded
+    .split(/\s[|·•–—-]\s|\|\s*|,\s+/)
+    .map((x) => x.replace(/\u0001/g, ',').replace(/^[\s,:;-]+|[\s,:;-]+$/g, '').trim())
+    .filter((x) => x.length > 1);
+}
+
 function parseWork(lines: string[]): { work: CvWork[]; ranges: { from: number; to: number; pub: boolean }[] } {
   const work: (CvWork & { idx: number })[] = [];
   const ranges: { from: number; to: number; pub: boolean }[] = [];
@@ -179,31 +188,28 @@ function parseWork(lines: string[]): { work: CvWork[]; ranges: { from: number; t
     const r = parseRange(lines[i]);
     if (!r) continue;
     if (levelOf(lines[i]) > 0 && !TITLE_WORDS.test(lines[i])) continue; // a study date range
-    const cands: string[] = [];
-    const rest = lines[i].replace(r.match, ' ').replace(/[()]\s*$|^\s*[()]/g, ' ');
-    for (const part of rest.split(/\s[|·•–—-]\s|\s\|\s|\|/)) if (part.trim().length > 2) cands.push(part.trim());
-    for (const k of [i - 1, i - 2, i + 1, i + 2]) {
-      const l = lines[k]?.trim();
-      if (l && !isBullet(l) && !parseRange(l) && l.length < 80 && !/:$/.test(l) && cands.length < 3) cands.push(l);
+    const parts = splitParts(lines[i].replace(r.match, ' '));
+    // Layout B: the title/employer sit on the lines around a lone date line.
+    if (parts.length < 2) {
+      for (const k of [i - 1, i - 2, i + 1]) {
+        const l = lines[k]?.trim();
+        if (l && !isBullet(l) && !parseRange(l) && l.length < 80 && !/:$/.test(l) && parts.length < 3) parts.push(...splitParts(l));
+      }
     }
-    let post = '';
-    let employer = '';
-    for (const c of cands) {
-      if (!post && TITLE_WORDS.test(c) && !ORG_WORDS.test(c)) post = c;
-      else if (!employer && ORG_WORDS.test(c)) employer = c;
-    }
-    for (const c of cands) {
-      if (!employer && c !== post && !TITLE_WORDS.test(c)) employer = c;
-      else if (!post && c !== employer) post = c;
-    }
+    let post = parts.find((c) => TITLE_WORDS.test(c) && !ORG_WORDS.test(c)) ?? '';
+    let employer = parts.find((c) => ORG_WORDS.test(c) && c !== post) ?? '';
+    const rest = parts.filter((c) => c !== post && c !== employer);
+    if (!post && rest.length && !(employer === '' && rest.length === 1)) post = rest.shift()!;
+    if (!employer && rest.length) employer = rest.shift()!;
+    if (!post && !employer && parts[0]) post = parts[0];
     let reason = '';
     for (let k = i; k < Math.min(lines.length, i + 8); k++) {
       const rm = lines[k].match(/reason for leaving\s*[:\-]\s*(.+)$/i);
       if (rm) reason = rm[1].trim().slice(0, 60);
     }
     work.push({
-      employer: employer.replace(/^[\s,:-]+|[\s,:-]+$/g, '').slice(0, 60),
-      post: post.replace(/^[\s,:-]+|[\s,:-]+$/g, '').slice(0, 60),
+      employer: employer.slice(0, 70),
+      post: post.slice(0, 60),
       fromMM: r.fromTok.mm,
       fromYY: r.fromTok.yy,
       toMM: r.toTok.present ? 'Pres' : r.toTok.mm,
@@ -223,7 +229,8 @@ function parseQuals(lines: string[]): CvQualification[] {
   const out: CvQualification[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i].trim();
-    if (!l || isBullet(l) && l.length > 90) continue;
+    if (!l || (isBullet(l) && l.length > 90)) continue;
+    if (/\b(modules?|subjects?|courses? (?:include|covered))\b\s*:?/i.test(l)) continue; // lists of modules are not qualifications
     const lvl = levelOf(l);
     if (!lvl && !/\b(diploma|degree|certificate|matric|grade 12|honou?rs|masters?|bachelor)\b/i.test(l)) continue;
     if (TITLE_WORDS.test(l) && !/diploma|degree|certificate|bachelor|honou?rs|master/i.test(l)) continue;
@@ -268,39 +275,43 @@ function parseLanguages(lines: string[]): CvInfo['languages'] {
   return [...found].map(([language, lvl]) => ({ language, speak: lvl, write: lvl }));
 }
 
-const PHONE_RE = /(?:\+27|0027|0)[\s().-]?\d{2}[\s().-]?\d{3}[\s.-]?\d{4}/;
+const PHONE_RE = /(?<!\d)(?:\+27|0027|0)[\s().-]?\d{2}[\s().-]?\d{3}[\s.-]?\d{4}(?!\d)/;
+
+const NAME_PART = "(?:[A-Z][A-Za-z'’-]*\\.?|(?:van|der|de|den|du|le|la|von|bin|ben)\\b)";
+const TITLED = new RegExp(`^(?:name\\s*[:\\-]\\s*)?((?:Mr|Mrs|Ms|Miss|Dr|Prof|Adv|Pastor|Rev|Hon)\\.?\\s+(?:${NAME_PART}\\s*){1,5})$`);
+const PLAIN = new RegExp(`^(?:name\\s*[:\\-]\\s*)?((?:${NAME_PART}\\s+){1,4}${NAME_PART})$`);
+const CONTACT_LINE = /^(?:tel(?:ephone)?|cell(?:phone)?|mobile|phone|e-?mail|work|office|fax|contact)\b/i;
 
 function parseRefs(lines: string[]): CvInfo['references'] {
-  const refs: CvInfo['references'] = [];
-  let cur: { name: string; relationship: string; tel: string } | null = null;
-  const nameRe = /^(?:(?:name|referee)\s*[:\-]\s*)?((?:(?:Mr|Mrs|Ms|Miss|Dr|Prof|Adv|Pastor)\.?\s+)?[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){1,3})\s*$/;
-  const REL = /(manager|supervisor|director|lecturer|colleague|hod|head|principal|line manager|chief|executive|professor|mentor|employer|team leader|coordinator|administrator|deputy|officer)/i;
+  const groups: string[][] = [];
   for (const raw of lines) {
     const l = raw.trim();
     if (!l || /available (?:up)?on request|on request/i.test(l)) continue;
-    const phone = l.match(PHONE_RE);
-    const nm = l.match(nameRe);
-    if (nm && !ORG_WORDS.test(l) && !REL.test(l) && !/\b(Pty|Ltd)\b/.test(l)) {
-      if (cur && cur.name) refs.push(cur);
-      cur = { name: nm[1], relationship: '', tel: '' };
-      continue;
-    }
-    if (!cur) {
-      if (phone) cur = { name: '', relationship: '', tel: phone[0] };
-      continue;
-    }
-    if (phone && !cur.tel) cur.tel = phone[0].trim();
-    const rel = l.match(/relationship\s*[:\-]\s*(.+)$/i)?.[1] ?? (REL.test(l) && !phone && l.length < 60 ? l : '');
-    if (rel && !cur.relationship) cur.relationship = rel.trim().slice(0, 50);
+    const titled = TITLED.test(l) && !/@|\d/.test(l);
+    const plain = groups.length === 0 && PLAIN.test(l) && !/@|\d/.test(l) && !ORG_WORDS.test(l);
+    if (titled || plain) groups.push([l]);
+    else if (groups.length) groups[groups.length - 1].push(l);
   }
-  if (cur && cur.name) refs.push(cur);
-  return refs.slice(0, 3);
+  const refs: CvInfo['references'] = [];
+  for (const g of groups) {
+    const name = (g[0].match(TITLED) ?? g[0].match(PLAIN))?.[1]?.trim() ?? g[0];
+    const phone = g.slice(1).map((l) => l.match(PHONE_RE)?.[0]).find(Boolean) ?? '';
+    const rel = g.slice(1).find((l) => !PHONE_RE.test(l) && !/@/.test(l) && !CONTACT_LINE.test(l) && l.length < 110) ?? '';
+    const labelled = g.map((l) => l.match(/relationship\s*[:\-]\s*(.+)$/i)?.[1]).find(Boolean);
+    refs.push({ name, relationship: (labelled ?? rel).trim().slice(0, 80), tel: phone.trim() });
+  }
+  return refs.filter((r) => r.name).slice(0, 3);
 }
 
 export function parseCv(rawText: string): CvInfo {
-  const text = rawText.replace(/\r/g, '').replace(/[  ]/g, ' ');
-  const lines = text.split('\n').map((l) => l.replace(/\s+/g, ' ').trim());
-  const sec = splitSections(lines);
+  const full = rawText.replace(/\r/g, '').replace(/[\u00a0\u2009]/g, ' ');
+  const allLines = full.split('\n').map((l) => l.replace(/\s+/g, ' ').trim());
+  const sec = splitSections(allLines);
+  // Everything before the references heading is "the CV body". Referee titles, emails and
+  // phone numbers must never be mistaken for the applicant's own.
+  const refAt = allLines.findIndex((l, i) => i > 5 && l.length < 30 && HEAD.references.test(l.replace(/[:\-–_]+$/g, '').trim()));
+  const lines = refAt > 0 ? allLines.slice(0, refAt) : allLines;
+  const text = lines.join('\n');
   const gaps: string[] = [];
 
   const idCand = (text.match(/\b\d{13}\b/g) ?? []).find(isValidSaId) ?? (text.match(/(?:id|identity)\s*(?:no|number)?\s*[:\-]?\s*(\d{13})/i)?.[1] ?? '');
@@ -309,7 +320,7 @@ export function parseCv(rawText: string): CvInfo {
   if (details) demo.gender = details.gender;
 
   const email = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)?.[0] ?? '';
-  const phone = text.match(PHONE_RE)?.[0].trim() ?? '';
+  const phone = text.replace(/\b\d{13}\b/g, ' ').match(PHONE_RE)?.[0].trim() ?? '';
 
   let surname = text.match(/\bsurname\s*[:\-]\s*([A-Za-z'’ -]{2,30})/i)?.[1]?.trim() ?? '';
   let firstNames = text.match(/\b(?:first\s*names?|full\s*names?|given\s*names?|names?)\s*[:\-]\s*([A-Za-z'’ -]{2,40})/i)?.[1]?.trim() ?? '';
@@ -350,6 +361,8 @@ export function parseCv(rawText: string): CvInfo {
   const notice = text.match(/notice period\s*[:\-]\s*([^\n]{1,30})/i)?.[1]?.trim() ?? (/available immediately|immediately available/i.test(text) ? 'Immediately' : '');
 
   if (!idCand) gaps.push('We could not find your ID number in the CV.');
+  if (!email) gaps.push('We could not find your own email address on the CV. Add it near your name, so the Department can reach you.');
+  if (!languages.length) gaps.push('We could not find a languages section on your CV. The Z83 asks how well you speak, read and write official languages.');
   if (!qualifications.length) gaps.push('We could not find your qualifications. Check your CV has an "Education" or "Qualifications" heading.');
   if (!work.length) gaps.push('We could not find dated work experience (for example "Jan 2018 - Present").');
   if (!hasReferences) gaps.push('Your CV has no references. Please update your CV with at least 3 referees (name, relationship, phone number). You can still create your application pack now.');

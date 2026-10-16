@@ -12,6 +12,10 @@ export interface Req {
   fields?: string[];
   years?: number;
   topic?: string;
+  /** Alternative kinds of work the experience must be in (any one will do), e.g. financial markets. */
+  domain?: string[];
+  /** Level of seniority the experience must be at, e.g. "assistant director" or "supervisory". */
+  seniority?: string;
 }
 
 export interface Post {

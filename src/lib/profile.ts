@@ -70,7 +70,9 @@ export function mergeCv(saved: Profile, cv: CvInfo): { profile: Profile; from: F
   fill('nationality', cv.nationality);
   fill('notice', cv.notice);
   fill('regNo', cv.registration);
-  fill('contact', p.method === 'telephone' ? cv.phone : cv.email || cv.phone);
+  // Use the applicant's own email if the CV has one, otherwise their phone number.
+  fill('contact', cv.email || cv.phone);
+  if (!saved.contact && !cv.email && cv.phone) p.method = 'telephone';
   fill('yearsPrivate', cv.totalYears !== null && cv.publicYears !== null ? String(Math.max(0, Math.round((cv.totalYears - cv.publicYears) * 10) / 10)) : undefined);
   fill('yearsPublic', cv.publicYears !== null ? String(cv.publicYears) : undefined);
   fill('languages', cv.languages.slice(0, 5));

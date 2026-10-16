@@ -80,25 +80,47 @@ function words(n: string): number {
   return NUM_WORDS[n.toLowerCase()] ?? Number(n);
 }
 
+const QUAL_WORD = '(?:national|grade|diploma|degree|b[. ]?tech|bachelor|honou?rs|master|certificate|advanced|postgraduate|nqf|matric|n[4-6])';
+
 function parseQualParts(sentence: string): Req[] {
-  const parts = sentence.split(/\s+and\s+(?:a\s+|an\s+)?(?=(?:national|grade|diploma|degree|b[. ]?tech|bachelor|honou?rs|master|certificate|advanced|postgraduate|nqf|matric))/i);
+  // "Grade 12 is required coupled with a minimum National Diploma ..." is two requirements.
+  const parts = sentence.split(new RegExp(`\\s+(?:and|coupled with|together with|plus|as well as)\\s+(?:a\\s+|an\\s+|minimum\\s+|a minimum\\s+)*(?=${QUAL_WORD})`, 'i'));
   const out: Req[] = [];
   for (const part of parts) {
-    const lvl = levelOf(part);
+    const nqfs = [...part.matchAll(/nqf\s*(?:level)?\s*(\d{1,2})/gi)].map((m) => Number(m[1]));
+    const lvl = nqfs.length ? Math.min(...nqfs) : levelOf(part);
     if (!lvl && !/qualification/i.test(part)) continue;
-    const lead = part.replace(/^.*?(?:in possession of|must have|must be in possession of)\s+/i, '').replace(/^(a|an)\s+/i, '').trim();
+    let lead = part
+      .replace(/^.*?(?:in possession of|must have|must be in possession of)\s+/i, '')
+      .replace(/^(?:an?\s+)?(?:minimum\s+(?:of\s+)?)?(?:an?\s+)?/i, '')
+      .trim();
     const m = lead.match(/\b(?:in|of)\s+([^()]+?)(?:\(|\bnqf\b|$|\.|,\s*(?:with|and))/i);
     let fields: string[] = [];
     if (m) {
       fields = m[1]
         .split(/\s*[/&]\s*|\s+or\s+|,\s*/i)
         .map((f) => f.replace(/\b(?:a|an|the|relevant|related|equivalent|as recognised by saqa)\b/gi, '').replace(/\s+/g, ' ').trim())
-        .filter((f) => f.length > 2 && !/^(possession|nqf)/i.test(f));
+        .filter((f) => f.length > 2 && !/^(possession|nqf|which|that)/i.test(f));
     }
-    const text = lead;
-    out.push({ id: '', kind: 'qualification', text: text.replace(/[.;]+$/, ''), nqf: lvl || undefined, fields: fields.length ? fields : undefined });
+    lead = lead.replace(/\s+is\s+required.*$/i, '').replace(/\s+/g, ' ').replace(/[.;,]+$/, '').trim();
+    out.push({ id: '', kind: 'qualification', text: lead, nqf: lvl || undefined, fields: fields.length ? fields : undefined });
   }
   return out;
+}
+
+const SENIORITY_RE = /\b(?:at|as|in|of)\s+(?:an?\s+|the\s+)?((?:assistant|deputy|chief)\s+director|director|senior\s+manager|manager|supervisor\w*|middle\s+management|senior\s+management|MMS|SMS)\b|\b(supervisory|managerial)\b/i;
+const GENERIC = /\b(?:environment|environments|field|fields|sector|area|areas|similar|related|relevant|equivalent|work|role|roles|position|positions|level)\b/gi;
+
+/** Pull the kind(s) of work out of an experience requirement, e.g. "financial markets, fixed income trading". */
+function experienceDomain(s: string): { topic: string; domain: string[] } {
+  const obtained = s.match(/\bobtained\s+(?:in|within|from)\s+(.*)$/i);
+  const general = s.match(/experience\s*(?:\w+\s+){0,2}?(?:in|within|of|as|at|with)\s+(?!which\b)(.*)$/i);
+  const raw = (obtained?.[1] ?? general?.[1] ?? '').replace(/[.;]+$/, '').trim();
+  const alts = raw
+    .split(/\s*(?:,|;|\/|\bor\b|\bwith\b|\bwithin\b)\s*/i)
+    .map((a) => a.replace(GENERIC, ' ').replace(/^(?:an?|the)\s+/i, '').replace(/\s+/g, ' ').trim())
+    .filter((a) => a.length > 2);
+  return { topic: raw, domain: alts };
 }
 
 export function parseRequirements(reqText: string): Req[] {
@@ -106,15 +128,21 @@ export function parseRequirements(reqText: string): Req[] {
   const split = reqText.split(/Job[\s-]*related\s+(?:knowledge|skills?|competenc\w+)\s*:?/i);
   const core = split[0];
   const rest = reqText.slice(core.length);
-  const sentences = core.split(/(?<=[.;])\s+(?=[A-Z(])/).map((s) => s.trim()).filter(Boolean);
+  const sentences = core.split(/(?<=[.;])(?<![\s/(,][A-Za-z]\.)\s+(?=[A-Z(])/).map((s) => s.trim()).filter(Boolean);
   for (const s of sentences) {
     const y = s.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\(\d+\))?\s*(?:\+\s*)?years?\b/i);
     if (y && /experience|exposure|supervis|managerial|working/i.test(s)) {
-      const t = s.match(/experience\s*(?:\w+\s+){0,2}?(?:in|of|as|within|at|with)\s+(.*)$/i);
-      const topic = (t ? t[1] : s.replace(/^.*?years?[’']?s?\s*/i, '')).replace(/[.;]+$/, '').trim();
-      // "supervisory experience in X" -> keep the adjective as part of the topic
-      const adj = s.match(/years?[’']?s?\s+((?:\w+\s+){0,2}?)experience/i)?.[1]?.replace(/relevant/i, '').trim() ?? '';
-      reqs.push({ id: '', kind: 'experience', text: s.replace(/[.;]+$/, ''), years: words(y[1]), topic: `${adj} ${topic}`.trim() });
+      const { topic, domain } = experienceDomain(s);
+      const sen = s.match(SENIORITY_RE);
+      reqs.push({
+        id: '',
+        kind: 'experience',
+        text: s.replace(/[.;]+$/, ''),
+        years: words(y[1]),
+        topic,
+        domain: domain.length ? domain : undefined,
+        seniority: sen ? (sen[1] ?? sen[2]).toLowerCase().replace(/\s+/g, ' ') : undefined,
+      });
       continue;
     }
     if (/driver[’']?s?[’']?\s*licen[cs]e/i.test(s)) {
@@ -154,9 +182,10 @@ export function parseRequirements(reqText: string): Req[] {
 }
 
 function requirementsSection(seg: string): string {
-  const start = seg.search(/Applicants?\s+must|Candidates?\s+must|Minimum\s+requirements?|\bRequirements?\s*:|Applicants?\s+should/i);
-  if (start < 0) return '';
-  const after = seg.slice(start);
+  const m = seg.match(/Applicants?\s+must|Candidates?\s+must|Minimum\s+requirements?\s*:?|\bRequirements?\s*:|Applicants?\s+should/i);
+  if (!m || m.index === undefined) return '';
+  const isLabel = /^(?:minimum\s+)?requirements?\s*:?$/i.test(m[0].trim());
+  const after = seg.slice(m.index + (isLabel ? m[0].length : 0)).trim();
   const end = after.search(/\bDUTIES\b|\bDuties\s*:|Key\s+(?:performance|responsibilit)|\bENQUIRIES\b|\bEnquiries\s*:/);
   return end > 0 ? after.slice(0, end) : after;
 }
