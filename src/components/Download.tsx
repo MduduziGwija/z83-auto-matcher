@@ -1,11 +1,11 @@
 import JSZip from 'jszip';
-import { Copy, Download as DownloadIcon, Eye, Loader2, Mail } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { CheckCircle2, Copy, Download as DownloadIcon, Eye, Loader2, Mail, Send } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtDate, titleProblem } from '../lib/circular';
 import { NameStyle, emailSubject, pdfName, uniqueNames } from '../lib/filename';
 import type { CircularInfo, Post, Profile } from '../lib/types';
 import { buildApplicationPdf } from '../lib/z83';
-import { PackItem, buildDetailsText } from '../lib/emailText';
+import { PackItem, buildDetailsText, buildEmailBody, gmailLink, mailtoLink } from '../lib/emailText';
 import { Notice, PrivacyNote } from './ui';
 
 interface Built {
@@ -37,11 +37,86 @@ function save(blob: Blob, name: string) {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
 
+/** One-tap email: the phone's share sheet attaches the PDF; on a computer we download it and open a ready draft. */
+function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy, id }: { to: string; subject: string; body: string; fileName: string; bytes: Uint8Array; onDownload: () => void; copied: string; copy: (what: string, text: string) => void; id: string }) {
+  const [note, setNote] = useState('');
+  const shareMode = useMemo(() => {
+    try {
+      const probe = new File([new Blob(['x'])], 'a.pdf', { type: 'application/pdf' });
+      return typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files: [probe] }) && window.matchMedia('(pointer: coarse)').matches;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const send = async () => {
+    setNote('');
+    if (shareMode) {
+      try {
+        const file = new File([bytes as BlobPart], fileName, { type: 'application/pdf' });
+        await navigator.share({ files: [file], title: subject, text: body });
+      } catch (e) {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) setNote('Your phone could not open the share list. Use “Download merged PDF” above, then the copy buttons below.');
+      }
+      return;
+    }
+    onDownload();
+    window.location.href = mailtoLink(to, subject, body);
+    setNote(`Your PDF was saved as “${fileName}”. In the email that opened, attach it from your Downloads folder.`);
+  };
+
+  const Row = ({ k, label, value, show }: { k: string; label: string; value: string; show?: string }) => (
+    <div className="copyrow">
+      <div className="copyrow-text">
+        <span className="copyrow-label">{label}</span>
+        <span className="copyrow-value">{show ?? value}</span>
+      </div>
+      <button type="button" className="btn btn-secondary btn-sm" onClick={() => copy(`${id}-${k}`, value)} aria-label={`Copy ${label.toLowerCase()}`}>
+        <Copy size={16} aria-hidden /> {copied === `${id}-${k}` ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="send">
+      <h3 className="send-title"><Send size={18} aria-hidden /> Send this application</h3>
+      <ol className="send-steps">
+        {shareMode ? (
+          <>
+            <li>Tap the green button. Your phone shows its share list: choose <strong>Gmail</strong> or your email app. The PDF, subject and message are filled in for you.</li>
+            <li>In the <strong>To</strong> box, paste the address (tap <strong>Copy</strong> next to it first).</li>
+            <li>Check it, then press <strong>Send</strong>.</li>
+          </>
+        ) : (
+          <>
+            <li>Click the green button. Your PDF downloads and an email opens with the address, subject and message filled in.</li>
+            <li>Attach the PDF called <strong>{fileName}</strong> from your Downloads folder.</li>
+            <li>Check it, then press <strong>Send</strong>.</li>
+          </>
+        )}
+      </ol>
+      {to ? <Row k="to" label="Send to" value={to} /> : <p className="hint">No email address was found for this post. Check the circular for where to send it.</p>}
+      <button type="button" className="btn btn-accent btn-lg send-go" onClick={send}>
+        <Mail size={20} aria-hidden /> {shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
+      </button>
+      {note && <p className="status send-note" role="status">{note}</p>}
+      <details className="send-more">
+        <summary>Copy each part yourself</summary>
+        <Row k="subject" label="Subject" value={subject} />
+        <Row k="body" label="Message" value={body} show="Short message for the email body" />
+        <Row k="file" label="File to attach" value={fileName} />
+        {to && <p className="hint"><a href={gmailLink(to, subject, body)} target="_blank" rel="noreferrer">Open this draft in Gmail on the web</a> (you still attach the PDF).</p>}
+      </details>
+    </div>
+  );
+}
+
 export default function Download({ circular, posts, profile, cvBytes, hasReferences, onBack, onEdit }: Props) {
   const [built, setBuilt] = useState<Built[]>([]);
   const [busy, setBusy] = useState(true);
   const [style, setStyle] = useState<NameStyle>('ref-title');
   const [copied, setCopied] = useState('');
+  const [sent, setSent] = useState<Set<string>>(new Set());
   const run = useRef(0);
   const maxMb = circular.maxSizeMb ?? 10;
 
@@ -109,7 +184,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
         </Notice>
       )}
       <Notice kind="info" title="Before you send">
-        Open each PDF and check the Z83 (especially the declarations and the post title and reference number). Send one separate email per post. We do not send anything for you.
+        Open each PDF and check the Z83 (especially the declarations and the post title and reference number). Send one separate email per post. You press Send yourself: we never send anything for you.
       </Notice>
 
       <fieldset className="choice naming">
@@ -132,8 +207,8 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
           const to = b.post.email || circular.emails[0] || '';
           const subject = emailSubject(b.post.ref, b.post.title);
           return (
-            <li key={b.post.id} className="pack">
-              <h2 className="pack-title">{b.post.title}</h2>
+            <li key={b.post.id} className={`pack ${sent.has(b.post.id) ? 'pack-sent' : ''}`}>
+              <h2 className="pack-title">{sent.has(b.post.id) && <CheckCircle2 size={22} className="sent-icon" aria-label="Sent" />} {b.post.title}</h2>
               <dl className="printed">
                 <dt>Printed on the Z83</dt>
                 <dd><strong>Position:</strong> {b.post.title}</dd>
@@ -159,15 +234,21 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
                     <button type="button" className="btn btn-primary" onClick={() => save(asBlob(b), names[i])}><DownloadIcon size={18} aria-hidden /> Download merged PDF</button>
                     <button type="button" className="btn btn-secondary" onClick={() => window.open(URL.createObjectURL(asBlob(b)), '_blank')}><Eye size={18} aria-hidden /> Preview</button>
                   </div>
-                  <div className="mail">
-                    <p><Mail size={16} aria-hidden /> <strong>Email it yourself</strong>{to ? <> to <span className="mono">{to}</span></> : ' to the address in the circular'}</p>
-                    <div className="actions wrap">
-                      {to && <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(`to${i}`, to)}><Copy size={16} aria-hidden /> {copied === `to${i}` ? 'Copied' : 'Copy address'}</button>}
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(`s${i}`, subject)}><Copy size={16} aria-hidden /> {copied === `s${i}` ? 'Copied' : 'Copy subject line'}</button>
-                      {to && <a className="btn btn-ghost btn-sm" href={`mailto:${to}?subject=${encodeURIComponent(subject)}`}>Open email app</a>}
-                    </div>
-                    <p className="hint">Suggested subject: {subject}. Attach this PDF yourself.</p>
-                  </div>
+                  <SendBox
+                    id={`p${i}`}
+                    to={to}
+                    subject={subject}
+                    body={buildEmailBody(profile, b.post)}
+                    fileName={names[i]}
+                    bytes={b.bytes as Uint8Array}
+                    onDownload={() => save(asBlob(b), names[i])}
+                    copied={copied}
+                    copy={copy}
+                  />
+                  <label className="checkline sentline">
+                    <input type="checkbox" className="check" checked={sent.has(b.post.id)} onChange={(e) => setSent((prev) => { const n = new Set(prev); if (e.target.checked) n.add(b.post.id); else n.delete(b.post.id); return n; })} />
+                    <span>I have sent this one</span>
+                  </label>
                 </>
               )}
             </li>
@@ -177,7 +258,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
 
       <div className="card">
         <h2>Email details to copy and paste</h2>
-        <p>A text file with your details, the correct email address, subject line and a short message for each post. It is also inside the ZIP.</p>
+        <p>A text file with the correct email address, subject line and a short message for each post, to copy and paste. It is also inside the ZIP.</p>
         <button type="button" className="btn btn-secondary" onClick={saveText} disabled={ok.length === 0}><DownloadIcon size={18} aria-hidden /> Download email details (.txt)</button>
       </div>
 
@@ -186,7 +267,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
       <div className="actions sticky">
         <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
         {ok.length > 0 && (
-          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> Download all as ZIP (PDFs + email details)</button>
+          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> Download all as ZIP</button>
         )}
       </div>
     </section>
