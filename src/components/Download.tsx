@@ -5,7 +5,7 @@ import { fmtDate, titleProblem } from '../lib/circular';
 import { NameStyle, emailSubject, pdfName, uniqueNames } from '../lib/filename';
 import type { CircularInfo, Post, Profile } from '../lib/types';
 import { buildApplicationPdf } from '../lib/z83';
-import { PackItem, buildDetailsText, buildEmailBody, gmailLink, mailtoLink } from '../lib/emailText';
+import { PackItem, buildDetailsText, buildEmailBody, buildEml, gmailLink, mailtoLink } from '../lib/emailText';
 import { Notice, PrivacyNote } from './ui';
 
 interface Built {
@@ -38,7 +38,7 @@ function save(blob: Blob, name: string) {
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
 
 /** One-tap email: the phone's share sheet attaches the PDF; on a computer we download it and open a ready draft. */
-function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy, id }: { to: string; subject: string; body: string; fileName: string; bytes: Uint8Array; onDownload: () => void; copied: string; copy: (what: string, text: string) => void; id: string }) {
+function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied, copy, id }: { to: string; subject: string; body: string; fileName: string; bytes: Uint8Array; onDownload: () => void; onEml: (eml: string) => void; copied: string; copy: (what: string, text: string) => void; id: string }) {
   const [note, setNote] = useState('');
   const shareMode = useMemo(() => {
     try {
@@ -51,10 +51,17 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy,
 
   const send = async () => {
     setNote('');
+    // Some email apps ignore the message when a file is attached, so the message is copied too: paste it if the body is empty.
+    try {
+      void navigator.clipboard?.writeText(body).catch(() => {});
+    } catch {
+      /* clipboard not available */
+    }
     if (shareMode) {
       try {
         const file = new File([bytes as BlobPart], fileName, { type: 'application/pdf' });
         await navigator.share({ files: [file], title: subject, text: body });
+        setNote('Message copied. If the email body is empty, tap in it and choose Paste.');
       } catch (e) {
         if (!(e instanceof DOMException && e.name === 'AbortError')) setNote('Your phone could not open the share list. Use “Download merged PDF” above, then the copy buttons below.');
       }
@@ -62,7 +69,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy,
     }
     onDownload();
     window.location.href = mailtoLink(to, subject, body);
-    setNote(`Your PDF was saved as “${fileName}”. In the email that opened, attach it from your Downloads folder.`);
+    setNote(`Your PDF was saved as “${fileName}” and the message was copied. In the email that opened, attach the PDF from your Downloads folder. If the body is empty, paste the message.`);
   };
 
   const Row = ({ k, label, value, show }: { k: string; label: string; value: string; show?: string }) => (
@@ -96,6 +103,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy,
         )}
       </ol>
       {to ? <Row k="to" label="Send to" value={to} /> : <p className="hint">No email address was found for this post. Check the circular for where to send it.</p>}
+      <Row k="msg" label="Message (copied for you when you tap the green button)" value={body} show={body.split('\n').slice(0, 3).join(' ').trim() + '…'} />
       <button type="button" className="btn btn-accent btn-lg send-go" onClick={send}>
         <Mail size={20} aria-hidden /> {shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
       </button>
@@ -105,6 +113,12 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, copied, copy,
         <Row k="subject" label="Subject" value={subject} />
         <Row k="body" label="Message" value={body} show="Short message for the email body" />
         <Row k="file" label="File to attach" value={fileName} />
+        {to && !shareMode && (
+          <p className="hint">
+            Using Outlook or Thunderbird on a computer?{' '}
+            <button type="button" className="btn btn-link btn-inline" onClick={() => onEml(buildEml({ to, subject, body, fileName, bytes }))}>Download a ready email with the PDF already attached (.eml)</button>
+          </p>
+        )}
         {to && <p className="hint"><a href={gmailLink(to, subject, body)} target="_blank" rel="noreferrer">Open this draft in Gmail on the web</a> (you still attach the PDF).</p>}
       </details>
     </div>
@@ -242,6 +256,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
                     fileName={names[i]}
                     bytes={b.bytes as Uint8Array}
                     onDownload={() => save(asBlob(b), names[i])}
+                    onEml={(eml) => save(new Blob([eml], { type: 'message/rfc822' }), names[i].replace(/\.pdf$/i, '') + ' (email draft).eml')}
                     copied={copied}
                     copy={copy}
                   />

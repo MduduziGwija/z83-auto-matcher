@@ -66,3 +66,41 @@ export function buildDetailsText(profile: Profile, items: PackItem[], date = new
   t += '* Check the closing date and the circular for any extra documents you must include.\n';
   return t;
 }
+
+const b64 = (bytes: Uint8Array) => {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/.{1,76}/g, '$&\r\n');
+};
+const encHeader = (t: string) => (/^[\x20-\x7e]*$/.test(t) ? t : `=?UTF-8?B?${btoa(unescape(encodeURIComponent(t)))}?=`);
+
+/**
+ * An unsent email with the PDF already attached (RFC 822 with "X-Unsent: 1").
+ * Outlook and Thunderbird on a computer open it as a ready draft: just press Send.
+ */
+export function buildEml(opts: { to: string; subject: string; body: string; fileName: string; bytes: Uint8Array }): string {
+  const boundary = `z83-${Math.random().toString(36).slice(2)}`;
+  const safeName = opts.fileName.replace(/[\r\n"]/g, '');
+  const body64 = btoa(unescape(encodeURIComponent(crlf(opts.body)))).replace(/.{1,76}/g, '$&\r\n');
+  return [
+    'X-Unsent: 1',
+    `To: ${opts.to}`,
+    `Subject: ${encHeader(opts.subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    body64,
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${encHeader(safeName)}"`,
+    'Content-Transfer-Encoding: base64',
+    `Content-Disposition: attachment; filename="${encHeader(safeName)}"`,
+    '',
+    b64(opts.bytes),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
+}

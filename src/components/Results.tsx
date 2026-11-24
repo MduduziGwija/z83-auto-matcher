@@ -234,6 +234,8 @@ export default function Results({ circular, cv, results, selected, setSelected, 
             </button>
           ))}
         </div>
+        <details className="more-filters" open={!!dept || !!level}>
+          <summary>More filters: department and salary level{(dept || level) ? ' (on)' : ''}</summary>
         <div className="field">
           <label htmlFor="deptf" className="label">Filter by department</label>
           <select id="deptf" className="input" value={dept} onChange={(e) => { setDept(e.target.value); setLimit(PAGE); }}>
@@ -254,6 +256,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
           </select>
           <p className="hint">Taken from the salary line in the circular. Some posts only print a salary or a grade, so they show as “Level not stated”, or as “from salary” when other posts in this circular pair that salary with a level.</p>
         </div>
+        </details>
         {hiddenCount > 0 && (
           <label className="checkline">
             <input type="checkbox" className="check" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
@@ -274,6 +277,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
         {shown.slice(0, limit).map((p) => {
           const r = results[p.id];
           const isClosedPost = closed(p);
+          const daysLeft = p.closing && !isClosedPost ? Math.ceil((p.closing.getTime() - Date.now()) / 86400000) : null;
           const ok = selectable(p);
           const isOpen = !!open[p.id];
           const hard = r.items.filter((i) => i.req.kind === 'qualification' || i.req.kind === 'experience' || i.req.kind === 'licence');
@@ -288,7 +292,7 @@ export default function Results({ circular, cv, results, selected, setSelected, 
           const softPartial = soft.filter((i) => i.outcome === 'partial');
           const softMissing = soft.filter((i) => i.outcome === 'missing');
           return (
-            <li key={p.id} className={`post ${!ok ? 'post-closed' : ''}`}>
+            <li key={p.id} className={`post ${!ok ? 'post-closed' : ''} ${selected.has(p.id) ? 'post-selected' : ''}`}>
               <div className="post-top">
                 <input id={`sel-${p.id}`} type="checkbox" className="check" checked={selected.has(p.id)} disabled={!ok} onChange={() => toggle(p.id)} aria-describedby={`d-${p.id}`} />
                 <div className="post-main">
@@ -331,10 +335,11 @@ export default function Results({ circular, cv, results, selected, setSelected, 
                   )}
                   <p className="post-meta">
                     <span className={isClosedPost ? 'tag tag-closed' : 'tag'}>{isClosedPost ? 'Closed' : 'Closes'} {fmtDate(p.closing)}</span>
+                    {daysLeft !== null && daysLeft <= 14 && <span className={`tag ${daysLeft <= 3 ? 'tag-closed' : 'tag-new'}`}>{daysLeft <= 0 ? 'Closes today' : daysLeft === 1 ? 'Closes tomorrow' : `${daysLeft} days left`}</span>}
                     {p.salary && <span className="muted"> · {p.salary}</span>}
                   </p>
                   {canEmail(p) ? (
-                    <p className="post-meta">Email: <span className="mono">{p.email}</span></p>
+                    <p className="post-meta">Email: <span className="email">{p.email}</span></p>
                   ) : (
                     <p className="post-meta"><span className="tag tag-new">Not by email</span> {p.applyNote}</p>
                   )}

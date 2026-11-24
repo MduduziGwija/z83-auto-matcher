@@ -1,8 +1,8 @@
-import { Plus, Trash2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ListChecks, Plus, Trash2, X, XCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { idDetails } from '../lib/cv';
 import { entryMonths, experienceTotals, formatMonths } from '../lib/experience';
-import type { FilledFrom, Source } from '../lib/profile';
+import { validateProfile, type FilledFrom, type Source } from '../lib/profile';
 import type { CvInfo, ExpEntry, Profile, YesNo } from '../lib/types';
 import SignaturePad from './SignaturePad';
 import { Notice, PrivacyNote, SourceTag } from './ui';
@@ -56,6 +56,39 @@ function Choice<T extends string>({ name, legend, value, options, onChange, from
 }
 
 const YN: [YesNo & ('yes' | 'no'), string][] = [['yes', 'Yes'], ['no', 'No']];
+
+function jumpTo(field: string) {
+  const el = document.getElementById(field);
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el?.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+  ((el?.querySelector('input,select,button,canvas') as HTMLElement | null) ?? el)?.focus?.({ preventScroll: true });
+}
+
+/** A live "what is left" card, so nobody has to hunt for the blank answers. */
+function Todo({ profile }: { profile: Profile }) {
+  const left = validateProfile(profile);
+  if (left.length === 0)
+    return (
+      <div className="todo todo-done" role="status">
+        <CheckCircle2 size={22} aria-hidden />
+        <div>
+          <strong>Everything is filled in.</strong>
+          <p>Have a last look at your answers, then create your PDFs.</p>
+        </div>
+      </div>
+    );
+  const first = left[0];
+  return (
+    <div className="todo" role="status">
+      <ListChecks size={22} aria-hidden />
+      <div>
+        <strong>{left.length} thing{left.length === 1 ? '' : 's'} left to fill in</strong>
+        <p>{first.message}</p>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => jumpTo(String(first.field))}>Take me there</button>
+      </div>
+    </div>
+  );
+}
 
 export default function ProfileForm({ profile: p, setProfile, from, cv, errors, attempt, onBack, onContinue, onClear }: Props) {
   const summary = useRef<HTMLDivElement>(null);
@@ -118,6 +151,7 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
       <p className="lead">You only do this once. We saved what we could from your CV. Check each answer, because you are declaring it to the Department.</p>
       <PrivacyNote />
       <p className="hint">Saved in this browser only. Use “Clear saved details” at the bottom to remove it.</p>
+      <Todo profile={p} />
 
       {toast && (
         <div className="toast" role="alert">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDetailsText, buildEmailBody, gmailLink, mailtoLink } from '../src/lib/emailText';
+import { buildDetailsText, buildEmailBody, buildEml, gmailLink, mailtoLink } from '../src/lib/emailText';
 import { emptyProfile } from '../src/lib/profile';
 import type { Post, Profile } from '../src/lib/types';
 
@@ -23,5 +23,20 @@ describe('email drafts', () => {
     const link = gmailLink('jobs@dept.gov.za', 'Hello & welcome', 'Body');
     expect(link).toContain('to=jobs%40dept.gov.za');
     expect(link).toContain('su=Hello%20%26%20welcome');
+  });
+});
+
+describe('email draft file', () => {
+  it('is an unsent message with the PDF attached', () => {
+    const bytes = new TextEncoder().encode('%PDF-1.4 test');
+    const eml = buildEml({ to: 'jobs@dept.gov.za', subject: 'Application: Data Analyst (Ref: 3/3/1/86/2026)', body: 'Dear Sir\nBody', fileName: 'Ref - Data Analyst.pdf', bytes });
+    expect(eml.startsWith('X-Unsent: 1\r\nTo: jobs@dept.gov.za\r\nSubject: Application: Data Analyst')).toBe(true);
+    expect(eml).toContain('Content-Type: multipart/mixed; boundary=');
+    expect(eml).toContain('Content-Disposition: attachment; filename="Ref - Data Analyst.pdf"');
+    expect(eml).toContain(btoa('%PDF-1.4 test'));
+  });
+  it('encodes a subject with non-ASCII letters', () => {
+    const eml = buildEml({ to: 'a@b.za', subject: 'Aansoek: Admin Beampte \u2013 Ref 1', body: 'x', fileName: 'a.pdf', bytes: new Uint8Array([1, 2]) });
+    expect(eml).toMatch(/Subject: =\?UTF-8\?B\?/);
   });
 });
