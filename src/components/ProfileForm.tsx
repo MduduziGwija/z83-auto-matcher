@@ -291,8 +291,8 @@ export default function ProfileForm({ profile: p, setProfile, from, cv, errors, 
         <h2>5. References</h2>
         {err('references') && <p className="error">{err('references')}</p>}
         {!cv.hasReferences && p.references.length === 0 && (
-          <Notice kind="warn" title="Your CV has no references">
-            Please update your CV with at least 3 referees (name, relationship, phone number). You can still continue and create your application pack now. You can also type referees below.
+          <Notice kind="warn" title="We could not find referees on your CV">
+            Add up to 3 referees below (name, relationship, phone number). They are saved on this device, so you only type them once.
           </Notice>
         )}
         {p.references.map((r, i) => (

@@ -65,3 +65,13 @@ describe('saved lists belong to the CV they were read from', () => {
     expect(mergeCv(stale, cvA).profile.work[0].employer).not.toMatch(/\($/);
   });
 });
+
+describe('mergeCv keeps what the person typed when a new CV has none', () => {
+  const noRefsCv = parseCv('SAM EXAMPLE\nCell: 082 555 1234\nID Number: 8001015009087\nEducation\nNational Diploma: Information Technology\nTUT, 2012\n');
+  it('keeps typed referees and languages across a different CV', () => {
+    const saved: Profile = { ...complete(), cvKey: 'older-cv', references: [{ name: 'Dr A Botha', relationship: 'Manager', tel: '082 111 2222' }] };
+    const { profile } = mergeCv(saved, noRefsCv);
+    expect(profile.references).toHaveLength(1);
+    expect(profile.languages).toHaveLength(1);
+  });
+});

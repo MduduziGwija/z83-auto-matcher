@@ -61,11 +61,12 @@ export type FilledFrom = Partial<Record<keyof Profile, Source>>;
  */
 export function mergeCv(savedIn: Profile, cv: CvInfo): { profile: Profile; from: FilledFrom } {
   // Lists read from a CV belong to that CV: a different CV (or a newer reader) means they are read again.
+  // Referees and languages the person typed are kept when the new CV has none, so nothing is typed twice.
   const key = cvKeyOf(cv);
   const saved: Profile =
     savedIn.cvKey === key
       ? savedIn
-      : { ...savedIn, qualifications: [], work: [], experience: [], yearsManual: false, references: [], languages: [], currentStudy: '', yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '' };
+      : { ...savedIn, qualifications: [], work: [], experience: [], yearsManual: false, references: cv.references.length ? [] : savedIn.references, languages: cv.languages.length ? [] : savedIn.languages, currentStudy: '', yearsPrivate: '', yearsPublic: '', regDate: '', regNo: '' };
   const p: Profile = { ...saved, cvKey: key };
   const from: FilledFrom = {};
   const fill = <K extends keyof Profile>(k: K, v: Profile[K] | undefined | null) => {

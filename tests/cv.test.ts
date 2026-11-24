@@ -55,7 +55,7 @@ describe('parseCv', () => {
   it('warns when no references', () => {
     const n = parseCv(CV.split('References')[0]);
     expect(n.hasReferences).toBe(false);
-    expect(n.gaps.join(' ')).toMatch(/no references/);
+    expect(n.gaps.join(' ')).toMatch(/referee details/);
   });
 });
 

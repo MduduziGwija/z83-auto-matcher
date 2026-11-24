@@ -15,29 +15,47 @@ const LANGS: Record<string, string> = {
 };
 
 const HEAD: Record<string, RegExp> = {
-  education: /^(?:education|qualifications?|academic(?:\s+(?:qualifications?|background|record))?|educational background|education and training|training and education|tertiary education)\b/i,
+  education: /^(?:education(?:al)?(?:\s+(?:and|&)\s+training|\s+background|\s+qualifications?|\s+history)?|(?:academic\s+|professional\s+)?qualifications?(?:\s+(?:and|&)\s+training)?|academic(?:\s+(?:qualifications?|background|record|history))?|training\s+(?:and|&)\s+education|tertiary\s+education|studies)\b/i,
   experience: /^(?:(?:work|employment|professional|career|relevant)\s+)?(?:experience|history)\b|^employment\b|^work\s+history\b|^career\s+history\b/i,
-  languages: /^languages?\b/i,
-  references: /^(?:references?|referees?)\b/i,
+  languages: /^(?:(?:spoken|written|home|first|other|official|known)\s+)?(?:languages?(?:\s+(?:known|spoken|proficiency|skills?|competenc\w+|ability|abilities))?|language\s+skills?|mother\s+tongue)\b/i,
+  references: /^(?:(?:professional|work|character|personal|contactable|employment|business|academic)\s+)?(?:references?|referees?)(?:\s+(?:and|&)\s+contact\s+(?:details|information))?(?:\s+(?:details|information|contacts?|list))?\b/i,
   skills: /^(?:key\s+|core\s+|technical\s+|computer\s+)?(?:skills|competenc\w+)\b/i,
 };
 const OTHER_HEAD = /^(?:summary|profile|objective|career objective|personal\s+(?:details|information|particulars|profile)|interests?|hobbies|achievements?|awards?|courses|certifications?|projects?|declaration|additional information|contact(?:\s+details)?)\b/i;
 
 export type Sections = Partial<Record<keyof typeof HEAD, string[]>>;
 
+/** Strips bullets, numbering and trailing punctuation so "2. EDUCATION:" and "• Referees" match their heading. */
+export function headingText(raw: string): string {
+  return raw.trim().replace(/^[\s\u2022\u25cf\u25aa\u25a0\u2023\-–—*#>|]*(?:\d{1,2}[.)]\s+)?/, '').replace(/[:\-–—_.\s]+$/g, '').trim();
+}
+
+function sectionKey(head: string): keyof typeof HEAD | undefined {
+  return (Object.keys(HEAD) as (keyof typeof HEAD)[]).find((k) => HEAD[k].test(head));
+}
+
 export function splitSections(lines: string[]): Sections {
   const out: Sections = {};
   let cur: string | null = null;
   for (const raw of lines) {
     const line = raw.trim();
-    const head = line.replace(/[:\-–_]+$/g, '').trim();
+    // "Languages: English, Xhosa" on one line: the heading and its content share the line.
+    const inline = line.match(/^(.{3,40}?)\s*[:–—-]\s*(\S.*)$/);
+    if (inline) {
+      const k = sectionKey(headingText(inline[1]));
+      if (k && !/\d{4}/.test(inline[1])) {
+        cur = k;
+        out[k] = out[k] ?? [];
+        out[k]!.push(inline[2]);
+        continue;
+      }
+    }
+    const head = headingText(line);
     if (head && head.length < 48 && !/\d{4}/.test(head)) {
-      const key = (Object.keys(HEAD) as (keyof typeof HEAD)[]).find((k) => HEAD[k].test(head));
+      const key = sectionKey(head);
       if (key) {
         cur = key;
         out[key] = out[key] ?? [];
-        const rest = head.replace(HEAD[key], '').trim();
-        if (rest && /^[:-]/.test(line.slice(head.length - rest.length - 1))) out[key]!.push(rest);
         continue;
       }
       if (OTHER_HEAD.test(head) && head.split(' ').length <= 4) {
@@ -272,19 +290,63 @@ function parseQuals(lines: string[]): CvQualification[] {
     .sort((a, b) => b.level - a.level);
 }
 
-function parseLanguages(lines: string[]): CvInfo['languages'] {
-  const found = new Map<string, string>();
+type Level = 'good' | 'fair' | 'poor';
+const LEVEL_WORDS = /\b(excellent|fluent|very good|proficient|native|mother tongue|first language|home language|advanced|good|high|expert|average|fair|intermediate|moderate|basic|elementary|poor|limited|beginner|very basic|low)\b/gi;
+const levelOfWord = (w: string): Level => {
+  const x = w.toLowerCase();
+  if (/poor|limited|beginner|very basic|low|elementary/.test(x)) return 'poor';
+  if (/fair|average|intermediate|moderate|basic/.test(x)) return 'fair';
+  return 'good';
+};
+
+/** "isi Xhosa", "isi-Xhosa", "IsiXhosa" and "Xhosa" all become one spelling. */
+const flattenLang = (t: string) => t.toLowerCase().replace(/\b(isi|si|se|xi|tshi)[\s-]+(?=[a-z])/g, '$1').replace(/\bsouth(?:ern)?\s+sotho\b/g, 'sesotho').replace(/\bnorth(?:ern)?\s+sotho\b/g, 'sepedi');
+const LANG_KEYS = Object.keys(LANGS).filter((k) => !k.includes(' '));
+const LANG_RE = new RegExp(`\\b(?:${LANG_KEYS.join('|')})\\b`, 'g');
+const langIn = (seg: string): string[] => [...new Set((flattenLang(seg).match(LANG_RE) ?? []).map((k) => LANGS[k]))];
+
+/** A line that is only language names, levels and list glue, e.g. "English, Xhosa and Afrikaans". */
+const onlyLanguages = (l: string) => {
+  const rest = flattenLang(l).replace(LANG_RE, ' ').replace(LEVEL_WORDS, ' ').replace(/\b(and|or|read|write|written|speak|spoken|reading|writing|speaking|fluently|fluent|language|languages|first|second|third|home|other|mother|tongue)\b/g, ' ').replace(/[^a-z]/g, '');
+  return langIn(l).length > 0 && rest.length === 0;
+};
+
+function parseLanguages(sectionLines: string[] | undefined, body: string[]): CvInfo['languages'] {
+  // Without a "Languages" section, still pick up labelled lines ("Home language: Xhosa") and lines that list only languages.
+  const labelled = body.filter((l) => l.length < 160 && /\b(?:languages?|mother tongue|home language)\b/i.test(l) && langIn(l).length > 0);
+  const bare = body.filter((l) => l.length < 100 && onlyLanguages(l));
+  const lines = (sectionLines && sectionLines.some((l) => langIn(l).length) ? sectionLines : [...labelled, ...bare]).slice(0, 40);
+
+  // "Language  Speak  Read  Write" followed by rows of levels: keep the columns apart.
+  const header = lines.find((l) => /\bspeak\w*\b/i.test(l) && /\b(?:write|writ\w+|read\w*)\b/i.test(l) && langIn(l).length === 0);
+  const cols: string[] = header ? [...header.toLowerCase().matchAll(/speak\w*|read\w*|writ\w*/g)].map((m) => (m[0].startsWith('s') ? 'speak' : m[0].startsWith('r') ? 'read' : 'write')) : [];
+
+  const found = new Map<string, { speak: Level; write: Level }>();
   for (const l of lines) {
-    const low = l.toLowerCase();
-    for (const [k, v] of Object.entries(LANGS)) {
-      if (new RegExp(`\\b${k}\\b`).test(low) && !found.has(v)) {
-        const seg = low.split(/[,;/|]/).find((s) => s.includes(k)) ?? low;
-        const lvl = /poor|limited|beginner|very basic/.test(seg) ? 'poor' : /fair|average|intermediate|basic|moderate/.test(seg) ? 'fair' : 'good';
-        found.set(v, lvl);
+    if (l === header) continue;
+    const segs = l.split(/[,;|\u2022]|\s\/\s|\sand\s|\s&\s/i).map((x) => x.trim()).filter(Boolean);
+    // keep a level that trails a list: "English, Zulu - Fluent"
+    const trailing = l.match(LEVEL_WORDS)?.slice(-1)[0];
+    for (const seg of segs) {
+      const langs = langIn(seg);
+      if (!langs.length) continue;
+      const words = [...seg.matchAll(LEVEL_WORDS)].map((m) => levelOfWord(m[0]));
+      let speak: Level = 'good';
+      let write: Level = 'good';
+      if (cols.length && words.length >= cols.length) {
+        const at = (c: string) => cols.indexOf(c);
+        speak = words[at('speak') >= 0 ? at('speak') : 0];
+        write = words[at('write') >= 0 ? at('write') : at('read') >= 0 ? at('read') : words.length - 1];
+      } else if (words.length) {
+        speak = words[0];
+        write = words[words.length - 1];
+      } else if (trailing && langs.length > 1) {
+        speak = write = levelOfWord(trailing);
       }
+      for (const lang of langs) if (!found.has(lang)) found.set(lang, { speak, write });
     }
   }
-  return [...found].map(([language, lvl]) => ({ language, speak: lvl, write: lvl }));
+  return [...found].map(([language, v]) => ({ language, speak: v.speak, write: v.write }));
 }
 
 const PHONE_RE = /(?<!\d)(?:\+27|0027|0)[\s().-]?\d{2}[\s().-]?\d{3}[\s.-]?\d{4}(?!\d)/;
@@ -294,25 +356,62 @@ const TITLED = new RegExp(`^(?:name\\s*[:\\-]\\s*)?((?:Mr|Mrs|Ms|Miss|Dr|Prof|Ad
 const PLAIN = new RegExp(`^(?:name\\s*[:\\-]\\s*)?((?:${NAME_PART}\\s+){1,4}${NAME_PART})$`);
 const CONTACT_LINE = /^(?:tel(?:ephone)?|cell(?:phone)?|mobile|phone|e-?mail|work|office|fax|contact)\b/i;
 
+const JOB_WORDS = /\b(manager|director|officer|supervisor|head|chief|lecturer|principal|coordinator|hod|executive|administrator|deputy|assistant|clerk|specialist|consultant|lead|professor|teacher|pastor|owner|ceo|cfo|hr)\b/i;
+const SEP = /\s*[|\u2013\u2014]\s*|\s-\s|\s*\t+\s*|\s{3,}/;
+const LABEL_NAME = /^(?:referee|reference)?\s*(?:full\s+)?name\s*[:\-]\s*(.+)$/i;
+const LABEL_REL = /^(?:position|designation|title|job\s*title|relationship|role|occupation|company|organi[sz]ation|employer|department|capacity)\s*[:\-]\s*(.+)$/i;
+const LABEL_TEL = /^(?:tel(?:ephone)?|cell(?:phone)?|mobile|phone|contact(?:\s*(?:no|number|details?))?|work|office)\s*(?:no\.?|number)?\s*[:\-]?\s*(.+)$/i;
+
 function parseRefs(lines: string[]): CvInfo['references'] {
-  const groups: string[][] = [];
-  for (const raw of lines) {
-    const l = raw.trim();
-    if (!l || /available (?:up)?on request|on request/i.test(l)) continue;
-    const titled = TITLED.test(l) && !/@|\d/.test(l);
-    const plain = groups.length === 0 && PLAIN.test(l) && !/@|\d/.test(l) && !ORG_WORDS.test(l);
-    if (titled || plain) groups.push([l]);
-    else if (groups.length) groups[groups.length - 1].push(l);
+  const cleaned = lines
+    .map((l) => l.trim().replace(/^[\u2022\u25cf\u25aa*>\-–\s]+/, '').replace(/^(?:(?:referee|reference)\s*)?\d{1,2}\s*[.):\-]\s*/i, '').replace(/^(?:referee|reference)\s*\d{1,2}\s*:?\s*/i, '').trim())
+    .filter((l) => l && !/available (?:up)?on request|on request|^(?:name|referee|reference)s?\s*(?:\||\t|\s{2,}).*(?:position|contact|tel|designation|relationship)/i.test(l))
+    .filter((l) => !/^(?:referee|reference)s?\s*:?$/i.test(l));
+  const nameOf = (t: string) => (t.match(TITLED) ?? t.match(PLAIN))?.[1]?.trim();
+  type G = { name: string; rel: string; tel: string; lines: string[] };
+  const groups: G[] = [];
+  const cur = () => groups[groups.length - 1];
+  const telOf = (t: string) => t.match(PHONE_RE)?.[0]?.trim() ?? '';
+  const complete = (g?: G) => !!g && (!!g.tel || g.lines.length >= 2);
+
+  for (const l of cleaned) {
+    const lab = l.match(LABEL_NAME);
+    if (lab) {
+      groups.push({ name: lab[1].trim(), rel: '', tel: '', lines: [] });
+      continue;
+    }
+    // One line per referee: "Mr A Dlamini – Director – 012 345 6789"
+    const parts = l.split(SEP).map((x) => x.trim()).filter(Boolean);
+    if (parts.length >= 2 && telOf(l) && nameOf(parts[0]) && !/\d/.test(parts[0])) {
+      groups.push({ name: nameOf(parts[0])!, rel: parts.slice(1).find((x) => !PHONE_RE.test(x) && !/@/.test(x)) ?? '', tel: telOf(l), lines: [l] });
+      continue;
+    }
+    // Name with the phone number on the same line: "Dr Sipho Dlamini 012 555 0000"
+    const tel = telOf(l);
+    const noTel = tel ? l.replace(tel, '').replace(/[()|,\-–:\s]+$/g, '').trim() : l;
+    const named = nameOf(noTel);
+    const titledName = TITLED.test(noTel);
+    const startsNew = !/@/.test(noTel) && !!named && !ORG_WORDS.test(noTel) && (titledName || (!JOB_WORDS.test(noTel) && (groups.length === 0 || complete(cur()))));
+    if (startsNew && (!/\d/.test(noTel))) {
+      groups.push({ name: named!, rel: '', tel, lines: [] });
+      continue;
+    }
+    const g = cur();
+    if (!g) continue;
+    const rl = l.match(LABEL_REL);
+    const tl = l.match(LABEL_TEL);
+    if (tl && PHONE_RE.test(tl[1])) g.tel = g.tel || telOf(tl[1]);
+    else if (rl) g.rel = g.rel || rl[1].trim();
+    else if (tel) g.tel = g.tel || tel;
+    else if (!/@/.test(l) && !CONTACT_LINE.test(l) && l.length < 110) {
+      if (!g.rel) g.rel = l;
+      g.lines.push(l);
+    }
   }
-  const refs: CvInfo['references'] = [];
-  for (const g of groups) {
-    const name = (g[0].match(TITLED) ?? g[0].match(PLAIN))?.[1]?.trim() ?? g[0];
-    const phone = g.slice(1).map((l) => l.match(PHONE_RE)?.[0]).find(Boolean) ?? '';
-    const rel = g.slice(1).find((l) => !PHONE_RE.test(l) && !/@/.test(l) && !CONTACT_LINE.test(l) && l.length < 110) ?? '';
-    const labelled = g.map((l) => l.match(/relationship\s*[:\-]\s*(.+)$/i)?.[1]).find(Boolean);
-    refs.push({ name, relationship: (labelled ?? rel).trim().slice(0, 80), tel: phone.trim() });
-  }
-  return refs.filter((r) => r.name).slice(0, 3);
+  return groups
+    .filter((g) => g.name)
+    .map((g) => ({ name: g.name.slice(0, 60), relationship: g.rel.replace(/\s+/g, ' ').trim().slice(0, 80), tel: g.tel }))
+    .slice(0, 3);
 }
 
 export function parseCv(rawText: string): CvInfo {
@@ -321,7 +420,7 @@ export function parseCv(rawText: string): CvInfo {
   const sec = splitSections(allLines);
   // Everything before the references heading is "the CV body". Referee titles, emails and
   // phone numbers must never be mistaken for the applicant's own.
-  const refAt = allLines.findIndex((l, i) => i > 5 && l.length < 30 && HEAD.references.test(l.replace(/[:\-–_]+$/g, '').trim()));
+  const refAt = allLines.findIndex((l, i) => i > 5 && l.length < 60 && HEAD.references.test(headingText(l)) && !/[,@]/.test(l));
   const lines = refAt > 0 ? allLines.slice(0, refAt) : allLines;
   const text = lines.join('\n');
   const gaps: string[] = [];
@@ -364,7 +463,7 @@ export function parseCv(rawText: string): CvInfo {
   const totalYears = total ?? (stated ? Number(stated[1]) : null);
 
   const qualifications = parseQuals(sec.education ?? lines);
-  const languages = parseLanguages(sec.languages ?? lines.filter((l) => /language/i.test(l)));
+  const languages = parseLanguages(sec.languages, lines);
   const refLines = sec.references ?? [];
   const references = parseRefs(refLines);
   const hasReferences = references.length > 0;
@@ -377,7 +476,12 @@ export function parseCv(rawText: string): CvInfo {
   if (!languages.length) gaps.push('We could not find a languages section on your CV. The Z83 asks how well you speak, read and write official languages.');
   if (!qualifications.length) gaps.push('We could not find your qualifications. Check your CV has an "Education" or "Qualifications" heading.');
   if (!work.length) gaps.push('We could not find dated work experience (for example "Jan 2018 - Present").');
-  if (!hasReferences) gaps.push('Your CV has no references. Please update your CV with at least 3 referees (name, relationship, phone number). You can still create your application pack now.');
+  if (!hasReferences) {
+    const onRequest = /references?\b[^\n]{0,40}\bon request|referees?\b[^\n]{0,40}\bon request/i.test(full);
+    gaps.push(onRequest
+      ? 'Your CV says references are available on request. Please add up to 3 referees below (name, relationship, phone number). You can still create your application pack now.'
+      : 'We could not find referee details on your CV. Please add up to 3 referees below (name, relationship, phone number). You can still create your application pack now.');
+  }
 
   return {
     text,
