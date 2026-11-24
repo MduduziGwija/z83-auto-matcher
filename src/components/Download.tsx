@@ -68,17 +68,19 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
       }
       return;
     }
-    // Some email apps ignore the message when a file is attached, so the message is copied too: paste it if the body is empty.
-    try {
-      void navigator.clipboard?.writeText(body).catch(() => {});
-    } catch {
-      /* clipboard not available */
+    // On the phone's share list the app cannot fill the address, so it is copied for the person to paste into the To box.
+    if (shareMode && to) {
+      try {
+        void navigator.clipboard?.writeText(to).catch(() => {});
+      } catch {
+        /* clipboard not available */
+      }
     }
     if (shareMode) {
       try {
         const file = new File([bytes as BlobPart], fileName, { type: 'application/pdf' });
         await navigator.share({ files: [file], title: subject, text: body });
-        setNote('Message copied. If the email body is empty, tap in it and choose Paste.');
+        setNote(to ? `The address ${to} is copied. In the email, touch and hold the To box and choose Paste.` : '');
       } catch (e) {
         if (!(e instanceof DOMException && e.name === 'AbortError')) setNote('Your phone could not open the share list. Use “Download merged PDF” above, then the copy buttons below.');
       }
@@ -86,7 +88,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
     }
     onDownload();
     window.location.href = mailtoLink(to, subject, body);
-    setNote(`Your PDF was saved as “${fileName}” and the message was copied. In the email that opened, attach the PDF from your Downloads folder. If the body is empty, paste the message.`);
+    setNote(`Your PDF was saved as “${fileName}”. In the email that opened, attach it from your Downloads folder.`);
   };
 
   const Row = ({ k, label, value, show }: { k: string; label: string; value: string; show?: string }) => (
@@ -113,9 +115,9 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
           </>
         ) : shareMode ? (
           <>
-            <li>Tap the green button. Your phone shows its share list: choose <strong>Gmail</strong> or your email app. The PDF, subject and message are filled in for you.</li>
-            <li>In the <strong>To</strong> box, paste the address (tap <strong>Copy</strong> next to it first).</li>
-            <li>Check it, then press <strong>Send</strong>.</li>
+            <li>Tap the green button. Your phone shows its share list: choose <strong>Gmail</strong> or your email app. The PDF is attached and the address is copied for you.</li>
+            <li>In the email, touch and hold the <strong>To</strong> box and choose <strong>Paste</strong>.</li>
+            <li>Check the subject and message (some apps change them), then press <strong>Send</strong>.</li>
           </>
         ) : (
           <>
@@ -126,7 +128,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
         )}
       </ol>
       {to ? <Row k="to" label="Send to" value={to} /> : <p className="hint">No email address was found for this post. Check the circular for where to send it.</p>}
-      <Row k="msg" label="Message (copied for you when you tap the green button)" value={body} show={body.split('\n').filter(Boolean).slice(1, 3).join(' ') + '…'} />
+      <Row k="msg" label="Message" value={body} show={body.split('\n').filter(Boolean).slice(1, 3).join(' ') + '…'} />
       <button type="button" className="btn btn-accent btn-lg send-go" onClick={send}>
         <Mail size={20} aria-hidden /> {native ? 'Open email with PDF attached' : shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
       </button>

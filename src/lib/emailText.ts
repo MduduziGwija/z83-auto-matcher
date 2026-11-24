@@ -18,26 +18,24 @@ export function buildEmailBody(profile: Profile, post: Pick<Post, 'title' | 'ref
   const name = applicantName(profile);
   const dept = post.department?.trim();
   const idLine = profile.idNumber ? `ID number: ${profile.idNumber}` : profile.passport ? `Passport number: ${profile.passport}` : '';
+  // Every sentence ends with a full stop, so the letter still reads well in apps (like Gmail on an iPhone) that run the lines together.
   return [
-    'Dear Sir/Madam',
+    'Dear Sir/Madam,',
     '',
-    `Application for the post of ${post.title} (Reference: ${post.ref})`,
+    `Application for the post of ${post.title} (Reference: ${post.ref}).`,
     '',
     `I hereby apply for the above-mentioned post${dept ? ` in the ${dept.replace(/^the\s+/i, '')}` : ''}.`,
     '',
-    'Please find attached a single PDF containing:',
-    '1. My completed Z83 application form',
-    '2. My Curriculum Vitae',
+    'Please find attached a single PDF containing my completed Z83 application form, followed by my Curriculum Vitae.',
     '',
     'Should you require any further information or documents, please contact me on the details below.',
     '',
     'Thank you for your time and consideration.',
     '',
-    'Yours faithfully',
-    '',
+    'Yours faithfully,',
     name,
-    ...(idLine ? [idLine] : []),
-    ...(profile.contact ? [`Contact: ${profile.contact}`] : []),
+    ...(idLine ? [`${idLine}.`] : []),
+    ...(profile.contact ? [`Contact: ${profile.contact}.`] : []),
     '',
   ].join('\n');
 }
