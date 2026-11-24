@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Download from './components/Download';
 import ProfileForm from './components/ProfileForm';
 import Results from './components/Results';
@@ -7,6 +7,7 @@ import { STEPS, Stepper } from './components/ui';
 import { isClosed, parseCircular } from './lib/circular';
 import { parseCv } from './lib/cv';
 import { matchPost } from './lib/match';
+import { isNative } from './lib/native';
 import { PdfReadError, extractText } from './lib/pdfText';
 import { FilledFrom, clearProfile, emptyProfile, loadProfile, mergeCv, saveProfile, validateProfile } from './lib/profile';
 import type { CircularInfo, CvInfo, MatchResult, PostEdit, Profile } from './lib/types';
@@ -35,6 +36,23 @@ export default function App() {
     setMaxStep((m) => Math.max(m, n));
     window.scrollTo({ top: 0 });
   }, []);
+
+  // In the Android app the back button goes to the previous step, and only leaves the app from the first step.
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  useEffect(() => {
+    if (!isNative()) return;
+    let remove: (() => void) | undefined;
+    void import('@capacitor/app').then(({ App: NativeApp }) =>
+      NativeApp.addListener('backButton', () => {
+        if (stepRef.current > 0) go(stepRef.current - 1);
+        else void NativeApp.exitApp();
+      }).then((h) => {
+        remove = () => void h.remove();
+      }),
+    );
+    return () => remove?.();
+  }, [go]);
 
   const runMatch = useCallback((c: CircularInfo, v: CvInfo) => {
     const r: Record<string, MatchResult> = {};
@@ -177,7 +195,7 @@ export default function App() {
       </main>
       <footer className="foot wrap">
         <p>Made by Mduduzi Gwija, to make job applications a bit less frustrating. Always check the circular and the Z83 yourself. Nothing is uploaded: all work happens in your browser.</p>
-        <p>The matcher uses basic rules, not AI, so it can be wrong. That is why this app is free.</p>
+        <p>The matcher uses basic rules, not AI, so it can be wrong. That is why this app is free. An independent tool, not affiliated with the DPSA or any government department. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>
       </footer>
     </div>
   );

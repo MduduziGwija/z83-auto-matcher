@@ -6,6 +6,7 @@ import { NameStyle, emailSubject, pdfName, uniqueNames } from '../lib/filename';
 import type { CircularInfo, Post, Profile } from '../lib/types';
 import { buildApplicationPdf } from '../lib/z83';
 import { PackItem, buildDetailsText, buildEmailBody, buildEml, gmailLink, mailtoLink } from '../lib/emailText';
+import { composeEmailNative, isNative, previewPdfNative, saveFileNative } from '../lib/native';
 import { Notice, PrivacyNote } from './ui';
 
 interface Built {
@@ -35,6 +36,12 @@ function save(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+/** In a browser the file downloads; inside the app it opens the phone's save / share list. */
+function deliver(blob: Blob, name: string) {
+  if (isNative()) void saveFileNative(blob, name).catch(() => {});
+  else save(blob, name);
+}
+
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
 
 /** One-tap email: the phone's share sheet attaches the PDF; on a computer we download it and open a ready draft. */
@@ -49,8 +56,18 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
     }
   }, []);
 
+  const native = isNative();
   const send = async () => {
     setNote('');
+    if (native) {
+      try {
+        const how = await composeEmailNative({ to, subject, body, fileName, blob: new Blob([bytes as BlobPart], { type: 'application/pdf' }) });
+        if (how === 'share') setNote('No email account is set up on this phone, so choose an email app from the list. Paste the address (tap Copy first) and the PDF is attached.');
+      } catch {
+        setNote('We could not open your email app. Use “Save or share PDF” above and the copy buttons below.');
+      }
+      return;
+    }
     // Some email apps ignore the message when a file is attached, so the message is copied too: paste it if the body is empty.
     try {
       void navigator.clipboard?.writeText(body).catch(() => {});
@@ -88,7 +105,13 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
     <div className="send">
       <h3 className="send-title"><Send size={18} aria-hidden /> Send this application</h3>
       <ol className="send-steps">
-        {shareMode ? (
+        {native ? (
+          <>
+            <li>Tap the green button. Your email app opens with the <strong>address, subject, message and PDF</strong> already filled in.</li>
+            <li>Check everything.</li>
+            <li>Press <strong>Send</strong>.</li>
+          </>
+        ) : shareMode ? (
           <>
             <li>Tap the green button. Your phone shows its share list: choose <strong>Gmail</strong> or your email app. The PDF, subject and message are filled in for you.</li>
             <li>In the <strong>To</strong> box, paste the address (tap <strong>Copy</strong> next to it first).</li>
@@ -105,7 +128,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
       {to ? <Row k="to" label="Send to" value={to} /> : <p className="hint">No email address was found for this post. Check the circular for where to send it.</p>}
       <Row k="msg" label="Message (copied for you when you tap the green button)" value={body} show={body.split('\n').slice(0, 3).join(' ').trim() + '…'} />
       <button type="button" className="btn btn-accent btn-lg send-go" onClick={send}>
-        <Mail size={20} aria-hidden /> {shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
+        <Mail size={20} aria-hidden /> {native ? 'Open email with PDF attached' : shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
       </button>
       {note && <p className="status send-note" role="status">{note}</p>}
       <details className="send-more">
@@ -168,13 +191,13 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
   const items: PackItem[] = built.map((b, i) => ({ post: b.post, fileName: names[i], subject: emailSubject(b.post.ref, b.post.title), to: b.post.email }));
   const detailsText = () => buildDetailsText(profile, items.filter((_, i) => built[i].bytes));
   const DETAILS_NAME = 'Email details (copy and paste).txt';
-  const saveText = () => save(new Blob([detailsText()], { type: 'text/plain;charset=utf-8' }), DETAILS_NAME);
+  const saveText = () => deliver(new Blob([detailsText()], { type: 'text/plain;charset=utf-8' }), DETAILS_NAME);
   const zipAll = async () => {
     const zip = new JSZip();
     built.forEach((b, i) => b.bytes && zip.file(names[i], b.bytes));
     zip.file(DETAILS_NAME, detailsText());
     const blob = await zip.generateAsync({ type: 'blob' });
-    save(blob, `Z83 applications - ${new Date().toISOString().slice(0, 10)}.zip`);
+    deliver(blob, `Z83 applications - ${new Date().toISOString().slice(0, 10)}.zip`);
   };
   const copy = async (what: string, text: string) => {
     try {
@@ -245,8 +268,8 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
                     <Notice kind="warn" title={`Larger than ${maxMb} MB`}>The circular allows PDFs up to {maxMb} MB. Please make your CV smaller (for example, “reduce file size”) and try again.</Notice>
                   )}
                   <div className="actions wrap">
-                    <button type="button" className="btn btn-primary" onClick={() => save(asBlob(b), names[i])}><DownloadIcon size={18} aria-hidden /> Download merged PDF</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => window.open(URL.createObjectURL(asBlob(b)), '_blank')}><Eye size={18} aria-hidden /> Preview</button>
+                    <button type="button" className="btn btn-primary" onClick={() => deliver(asBlob(b), names[i])}><DownloadIcon size={18} aria-hidden /> {isNative() ? 'Save or share PDF' : 'Download merged PDF'}</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => (isNative() ? void previewPdfNative(asBlob(b), names[i]).catch(() => {}) : window.open(URL.createObjectURL(asBlob(b)), '_blank'))}><Eye size={18} aria-hidden /> Preview</button>
                   </div>
                   <SendBox
                     id={`p${i}`}
@@ -255,7 +278,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
                     body={buildEmailBody(profile, b.post)}
                     fileName={names[i]}
                     bytes={b.bytes as Uint8Array}
-                    onDownload={() => save(asBlob(b), names[i])}
+                    onDownload={() => deliver(asBlob(b), names[i])}
                     onEml={(eml) => save(new Blob([eml], { type: 'message/rfc822' }), names[i].replace(/\.pdf$/i, '') + ' (email draft).eml')}
                     copied={copied}
                     copy={copy}
@@ -282,7 +305,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
       <div className="actions sticky">
         <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
         {ok.length > 0 && (
-          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> Download all as ZIP</button>
+          <button type="button" className="btn btn-primary btn-lg" onClick={zipAll}><DownloadIcon size={20} aria-hidden /> {isNative() ? 'Share all as ZIP' : 'Download all as ZIP'}</button>
         )}
       </div>
     </section>

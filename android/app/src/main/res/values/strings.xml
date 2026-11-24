@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Z83 Auto-Matcher</string>
+    <string name="title_activity_main">Z83 Auto-Matcher</string>
+    <string name="package_name">com.mduduzigwija.z83matcher</string>
+    <string name="custom_url_scheme">com.mduduzigwija.z83matcher</string>
+</resources>
