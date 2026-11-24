@@ -103,7 +103,11 @@ export function mergeCv(savedIn: Profile, cv: CvInfo): { profile: Profile; from:
     fill('yearsPrivate', String(cv.totalYears));
   }
   fill('languages', cv.languages.slice(0, 5));
-  fill('qualifications', cv.qualifications.slice(0, 4).map((q) => ({ school: q.school, qualification: q.text, year: q.year })));
+  // The Z83 has four rows. Highest first, but never leave out matric (Grade 12), which most posts ask for.
+  const quals = cv.qualifications.slice(0, 4);
+  const matric = cv.qualifications.find((q) => q.level === 4);
+  if (matric && !quals.includes(matric) && quals.length === 4) quals[3] = matric;
+  fill('qualifications', quals.map((q) => ({ school: q.school, qualification: q.text, year: q.year })));
   fill('work', cv.work.slice(0, 3));
   fill('references', cv.references.slice(0, 3));
   if (!p.citizen && /south african/i.test(cv.nationality)) {

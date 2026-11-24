@@ -39,7 +39,7 @@ Ms. Emily Sample
 Administrative Officer (Western Cape Department of Infrastructure)
 Telephone: 0214830118
 Email: emily.sample@example.gov.za
-Dr. F Khaile
+Dr. F Example
 Senior Lecturer (University of the Western Cape)
 Telephone: 0219593827
 Email: fk@example.ac.za
@@ -63,7 +63,7 @@ describe('real-world CV', () => {
     expect(cv.qualifications.length).toBe(3);
   });
   it('reads all three referees with their titles', () => {
-    expect(cv.references.map((r) => r.name)).toEqual(['Ms. Jane Referee', 'Ms. Emily Sample', 'Dr. F Khaile']);
+    expect(cv.references.map((r) => r.name)).toEqual(['Ms. Jane Referee', 'Ms. Emily Sample', 'Dr. F Example']);
     expect(cv.references[1].relationship).toMatch(/Administrative Officer/);
     expect(cv.references[2].tel).toBe('0219593827');
   });

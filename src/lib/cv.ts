@@ -43,8 +43,15 @@ export function headingText(raw: string): string {
   return raw.trim().replace(/^[\s\u2022\u25cf\u25aa\u25a0\u2023\-–—*#>|]*(?:\d{1,2}[.)]\s+)?/, '').replace(/[:\-–—_.\s]+$/g, '').trim();
 }
 
+// A heading is a short line that IS the heading (optionally "X and Y", "X & Y"), never a sentence that merely starts with one.
+const JOINED_TAIL = /^\s*(?:&|and|\/|,)\s*[A-Za-z]+(?:\s+[A-Za-z]+){0,3}$/;
 function sectionKey(head: string): keyof typeof HEAD | undefined {
-  return (Object.keys(HEAD) as (keyof typeof HEAD)[]).find((k) => HEAD[k].test(head));
+  const h = head.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (!h || !/^[A-Z0-9]/.test(h)) return undefined; // wrapped sentences continue in lower case
+  return (Object.keys(HEAD) as (keyof typeof HEAD)[]).find((k) => {
+    const m = h.match(HEAD[k]);
+    return !!m && (m[0].length >= h.length || JOINED_TAIL.test(h.slice(m[0].length)));
+  });
 }
 
 export function splitSections(lines: string[]): Sections {
@@ -254,7 +261,25 @@ export function durationMonths(line: string): number | null {
   return Math.round(Number(m[1].replace(',', '.')) * 12) + (m[2] ? Number(m[2]) : 0);
 }
 
-function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[]; undatedMonths: number; undatedJobs: number } {
+const POST_LABEL = /^(?:position|job\s*title|title|role|designation|post)\s*[:\-]\s*/i;
+const ORG_LABEL = /^(?:organi[sz]ation|employer|company|institution|firm|place of work)\s*[:\-]\s*(.+)$/i;
+const unbalanced = (t: string) => (t.match(/\(/g) ?? []).length > (t.match(/\)/g) ?? []).length;
+const DURATION_PAREN = /\(\s*\d+(?:[.,]\d)?\s*(?:years?|yrs?)[^)]*\)|\(\s*\d+\s*(?:months?|mths?)\s*\)/gi;
+
+/** "Organisation: X (wrapped" + "text)" on the following lines: the employer without the bracketed extra. */
+function labelledEmployer(lines: string[], from: number): string {
+  for (let k = from; k < Math.min(lines.length, from + 4); k++) {
+    const m = lines[k]?.trim().match(ORG_LABEL);
+    if (!m) continue;
+    let t = m[1].trim();
+    for (let j = k + 1; unbalanced(t) && j < Math.min(lines.length, k + 3); j++) t += ' ' + lines[j].trim();
+    return t.replace(/\s*\([^)]*\)?\s*$/, '').trim() || t;
+  }
+  return '';
+}
+
+function parseWork(allLines: string[]): { work: CvWork[]; experience: ExpEntry[]; undatedMonths: number; undatedJobs: number } {
+  const lines = allLines.map((l) => l.trim()).filter(Boolean); // PDFs often put a blank line between lines
   const work: (CvWork & { idx: number })[] = [];
   const experience: ExpEntry[] = [];
   let undatedMonths = 0;
@@ -274,16 +299,17 @@ function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[]; u
       continue;
     }
     if (levelOf(lines[i]) > 0 && !TITLE_WORDS.test(lines[i])) continue; // a study date range
-    const parts = splitParts(lines[i].replace(r.match, ' '));
+    const orgFromLabel = labelledEmployer(lines, i + 1);
+    const parts = splitParts(lines[i].replace(r.match, ' ').replace(DURATION_PAREN, ' ').replace(POST_LABEL, ''));
     // Layout B: the title/employer sit on the lines around a lone date line.
-    if (parts.length < 2) {
+    if (parts.length < 2 && !orgFromLabel) {
       for (const k of [i - 1, i - 2, i + 1]) {
         const l = lines[k]?.trim();
         if (l && !isBullet(l) && !parseRange(l) && l.length < 80 && !/:$/.test(l) && parts.length < 3) parts.push(...splitParts(l));
       }
     }
     let post = parts.find((c) => TITLE_WORDS.test(c) && !ORG_WORDS.test(c)) ?? '';
-    let employer = parts.find((c) => ORG_WORDS.test(c) && c !== post) ?? '';
+    let employer = orgFromLabel || (parts.find((c) => ORG_WORDS.test(c) && c !== post) ?? '');
     const rest = parts.filter((c) => c !== post && c !== employer);
     if (!post && rest.length && !(employer === '' && rest.length === 1)) post = rest.shift()!;
     if (!employer && rest.length) employer = rest.shift()!;
@@ -358,7 +384,8 @@ function tidyQual(raw: string): { text: string; school: string } {
   return { text, school };
 }
 
-function parseQuals(allLines: string[]): CvQualification[] {
+function parseQuals(rawLines: string[]): CvQualification[] {
+  const allLines = rawLines.map((l) => l.trim()).filter(Boolean);
   const out: CvQualification[] = [];
   const lines: string[] = [];
   // Labelled blocks: "Qualification: BA ...", "Institution: ...", "Year Completed: 2022".
@@ -392,11 +419,15 @@ function parseQuals(allLines: string[]): CvQualification[] {
     if (!l || (isBullet(l) && l.length > 90)) continue;
     if (/\b(modules?|subjects?|courses? (?:include|covered))\b\s*:?/i.test(l)) continue; // lists of modules are not qualifications
     if (/^(?:duration|period|length)\s*[:\-]/i.test(l)) continue;
+    // A qualification line starts with a capital; a sentence or a wrapped line does not, and long sentences are never one.
+    if (/^[a-z]/.test(l) || (l.split(/\s+/).length > 14 && /[.;]$/.test(l))) continue;
     const lvl = levelOf(l);
     if (!lvl && !/\b(diploma|degree|certificate|matric|grade 12|honou?rs|masters?|bachelor|pgce|std\s*10)\b/i.test(l)) continue;
     if (TITLE_WORDS.test(l) && !/diploma|degree|certificate|bachelor|honou?rs|master|pgce/i.test(l)) continue;
     const neighbours = [lines[i - 1], lines[i + 1], lines[i + 2]].filter(Boolean).map((x) => x.trim());
-    const years = [l, ...neighbours.slice(0, 2)].join(' ').match(YEAR_RE);
+    // The year on the line itself wins. Only borrow from the lines below when it has none, and never from the next qualification.
+    const nearby = [lines[i + 1], lines[i + 2]].filter((x) => x && levelOf(x) === 0).join(' ');
+    const years = l.match(YEAR_RE) ?? [lines[i - 1] && levelOf(lines[i - 1]) === 0 && !SCHOOL_RE.test(lines[i - 1]) ? lines[i - 1] : '', nearby].join(' ').match(YEAR_RE);
     // Look forward first: the institution usually follows its qualification, and the line before is often the previous qualification's institution.
     const after = [lines[i + 1], lines[i + 2]].filter(Boolean).map((x) => x.trim());
     const prev = lines[i - 1]?.trim() ?? '';
@@ -486,8 +517,21 @@ const LABEL_NAME = /^(?:referee|reference)?\s*(?:full\s+)?name\s*[:\-]\s*(.+)$/i
 const LABEL_REL = /^(?:position|designation|title|job\s*title|relationship|role|occupation|company|organi[sz]ation|employer|department|capacity)\s*[:\-]\s*(.+)$/i;
 const LABEL_TEL = /^(?:tel(?:ephone)?|cell(?:phone)?|mobile|phone|contact(?:\s*(?:no|number|details?))?|work|office)\s*(?:no\.?|number)?\s*[:\-]?\s*(.+)$/i;
 
+/** Shortens a long job title: drop a bracketed extra first, then cut at a whole word. */
+const cutAtWord = (t: string, max: number) => {
+  if (t.length <= max) return t;
+  const noBrackets = t.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const base = noBrackets && noBrackets.length <= max ? noBrackets : t;
+  return base.length <= max ? base : base.slice(0, max).replace(/\s+\S*$/, '').trim();
+};
+
 function parseRefs(lines: string[]): CvInfo['references'] {
-  const cleaned = lines
+  const joined: string[] = [];
+  for (const raw of lines.map((l) => l.trim()).filter(Boolean)) {
+    if (joined.length && unbalanced(joined[joined.length - 1])) joined[joined.length - 1] += ' ' + raw;
+    else joined.push(raw);
+  }
+  const cleaned = joined
     .map((l) => l.trim().replace(/^[\u2022\u25cf\u25aa*>\-–\s]+/, '').replace(/^(?:(?:referee|reference)\s*)?\d{1,2}\s*[.):\-]\s*/i, '').replace(/^(?:referee|reference)\s*\d{1,2}\s*:?\s*/i, '').trim())
     .filter((l) => l && !/available (?:up)?on request|on request|^(?:name|referee|reference)s?\s*(?:\||\t|\s{2,}).*(?:position|contact|tel|designation|relationship)/i.test(l))
     .filter((l) => !/^(?:referee|reference)s?\s*:?$/i.test(l));
@@ -527,14 +571,14 @@ function parseRefs(lines: string[]): CvInfo['references'] {
     if (tl && PHONE_RE.test(tl[1])) g.tel = g.tel || telOf(tl[1]);
     else if (rl) g.rel = g.rel || rl[1].trim();
     else if (tel) g.tel = g.tel || tel;
-    else if (!/@/.test(l) && !CONTACT_LINE.test(l) && l.length < 110) {
+    else if (!/@/.test(l) && !CONTACT_LINE.test(l) && l.length < 180) {
       if (!g.rel) g.rel = l;
       g.lines.push(l);
     }
   }
   return groups
     .filter((g) => g.name)
-    .map((g) => ({ name: g.name.slice(0, 60), relationship: g.rel.replace(/\s+/g, ' ').trim().slice(0, 80), tel: g.tel }))
+    .map((g) => ({ name: g.name.slice(0, 60), relationship: cutAtWord(g.rel.replace(/\s+/g, ' ').trim(), 110), tel: g.tel }))
     .slice(0, 3);
 }
 

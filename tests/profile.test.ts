@@ -41,9 +41,9 @@ describe('validateProfile: a Z83 cannot go out with blanks', () => {
 
 describe('referees must be complete', () => {
   it('needs name, relationship and phone on every row that exists', () => {
-    const half = { ...complete(), references: [{ name: 'Ms Arnold', relationship: '', tel: '0214835395' }] };
+    const half = { ...complete(), references: [{ name: 'Ms Sample', relationship: '', tel: '0215550101' }] };
     expect(validateProfile(half).map((e) => e.field)).toEqual(['references']);
-    const full = { ...complete(), references: [{ name: 'Ms Arnold', relationship: 'Line manager', tel: '0214835395' }] };
+    const full = { ...complete(), references: [{ name: 'Ms Sample', relationship: 'Line manager', tel: '0215550101' }] };
     expect(validateProfile(full)).toEqual([]);
   });
 });
