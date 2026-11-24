@@ -41,7 +41,7 @@ Telephone: 0214830118
 Email: emily.sample@example.gov.za
 Dr. F Example
 Senior Lecturer (University of the Western Cape)
-Telephone: 0219593827
+Telephone: 0215550105
 Email: fk@example.ac.za
 `;
 
@@ -65,7 +65,7 @@ describe('real-world CV', () => {
   it('reads all three referees with their titles', () => {
     expect(cv.references.map((r) => r.name)).toEqual(['Ms. Jane Referee', 'Ms. Emily Sample', 'Dr. F Example']);
     expect(cv.references[1].relationship).toMatch(/Administrative Officer/);
-    expect(cv.references[2].tel).toBe('0219593827');
+    expect(cv.references[2].tel).toBe('0215550105');
   });
   it('ignores referee titles when judging seniority', () => {
     expect(cv.text).not.toMatch(/Deputy Director General/);
