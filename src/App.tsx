@@ -3,7 +3,7 @@ import Download from './components/Download';
 import ProfileForm from './components/ProfileForm';
 import Results from './components/Results';
 import Upload from './components/Upload';
-import { Stepper } from './components/ui';
+import { STEPS, Stepper } from './components/ui';
 import { isClosed, parseCircular } from './lib/circular';
 import { parseCv } from './lib/cv';
 import { matchPost } from './lib/match';
@@ -122,7 +122,19 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="wrap">
-          <span className="brand">Z83 Auto-Matcher</span>
+          <div className="brand-row">
+            <span className="brand">
+              <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
+                <rect width="32" height="32" rx="9" fill="var(--primary)" />
+                <path d="M9 16.5l4.6 4.6L23 11.2" stroke="#fff" strokeWidth="3.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Z83 Auto-Matcher
+            </span>
+            <span className="stepcount" aria-hidden>Step {step + 1} of {STEPS.length} · {STEPS[step]}</span>
+          </div>
+          <div className="progress" role="progressbar" aria-label="Your progress" aria-valuemin={1} aria-valuemax={STEPS.length} aria-valuenow={step + 1} aria-valuetext={`Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}>
+            <i style={{ width: `${((step + 1) / STEPS.length) * 100}%` }} />
+          </div>
           <Stepper step={step} onGo={goChecked} maxStep={maxStep} />
         </div>
       </header>
