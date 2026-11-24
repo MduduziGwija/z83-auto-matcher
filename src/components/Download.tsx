@@ -126,7 +126,7 @@ function SendBox({ to, subject, body, fileName, bytes, onDownload, onEml, copied
         )}
       </ol>
       {to ? <Row k="to" label="Send to" value={to} /> : <p className="hint">No email address was found for this post. Check the circular for where to send it.</p>}
-      <Row k="msg" label="Message (copied for you when you tap the green button)" value={body} show={body.split('\n').slice(0, 3).join(' ').trim() + '…'} />
+      <Row k="msg" label="Message (copied for you when you tap the green button)" value={body} show={body.split('\n').filter(Boolean).slice(1, 3).join(' ') + '…'} />
       <button type="button" className="btn btn-accent btn-lg send-go" onClick={send}>
         <Mail size={20} aria-hidden /> {native ? 'Open email with PDF attached' : shareMode ? 'Share PDF to my email app' : 'Open email draft and download PDF'}
       </button>
@@ -275,7 +275,7 @@ export default function Download({ circular, posts, profile, cvBytes, hasReferen
                     id={`p${i}`}
                     to={to}
                     subject={subject}
-                    body={buildEmailBody(profile, b.post)}
+                    body={buildEmailBody(profile, { title: b.post.title, ref: b.post.ref, department: b.post.department })}
                     fileName={names[i]}
                     bytes={b.bytes as Uint8Array}
                     onDownload={() => deliver(asBlob(b), names[i])}

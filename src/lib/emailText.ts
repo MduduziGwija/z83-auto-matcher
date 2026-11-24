@@ -14,14 +14,32 @@ const nice = (w: string) => (w === w.toUpperCase() ? w.toLowerCase().replace(/(^
 export const applicantName = (profile: Profile) => `${profile.firstNames} ${nice(profile.surname)}`.trim();
 
 /** The message that goes in the email, the same in the details file, the copy button and the draft. */
-export function buildEmailBody(profile: Profile, post: Pick<Post, 'title' | 'ref'>): string {
+export function buildEmailBody(profile: Profile, post: Pick<Post, 'title' | 'ref'> & { department?: string }): string {
   const name = applicantName(profile);
-  let t = `Dear Sir/Madam\n\nPlease find attached my application for the post of ${post.title} (Reference: ${post.ref}).\n`;
-  t += 'The attached PDF contains my completed Z83 form followed by my CV.\n\n';
-  t += `Kind regards\n${name}\n`;
-  if (profile.idNumber) t += `ID number: ${profile.idNumber}\n`;
-  if (profile.contact) t += `Contact: ${profile.contact}\n`;
-  return t;
+  const dept = post.department?.trim();
+  const idLine = profile.idNumber ? `ID number: ${profile.idNumber}` : profile.passport ? `Passport number: ${profile.passport}` : '';
+  return [
+    'Dear Sir/Madam',
+    '',
+    `Application for the post of ${post.title} (Reference: ${post.ref})`,
+    '',
+    `I hereby apply for the above-mentioned post${dept ? ` in the ${dept.replace(/^the\s+/i, '')}` : ''}.`,
+    '',
+    'Please find attached a single PDF containing:',
+    '1. My completed Z83 application form',
+    '2. My Curriculum Vitae',
+    '',
+    'Should you require any further information or documents, please contact me on the details below.',
+    '',
+    'Thank you for your time and consideration.',
+    '',
+    'Yours faithfully',
+    '',
+    name,
+    ...(idLine ? [idLine] : []),
+    ...(profile.contact ? [`Contact: ${profile.contact}`] : []),
+    '',
+  ].join('\n');
 }
 
 const crlf = (t: string) => t.replace(/\r?\n/g, '\r\n');

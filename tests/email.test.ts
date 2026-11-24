@@ -7,10 +7,22 @@ const profile: Profile = { ...emptyProfile(), firstNames: 'Nomsa', surname: 'KHU
 const post = { title: 'Data Analyst', ref: '3/3/1/86/2026', department: 'Agriculture', email: 'jobs@dept.gov.za', closing: null } as unknown as Post;
 
 describe('email drafts', () => {
+  it('reads like a formal application', () => {
+    const body = buildEmailBody(profile, post);
+    expect(body.startsWith('Dear Sir/Madam\n\nApplication for the post of')).toBe(true);
+    expect(body).toContain('I hereby apply for the above-mentioned post in the Agriculture.');
+    expect(body).toContain('1. My completed Z83 application form\n2. My Curriculum Vitae');
+    expect(body.endsWith('Contact: nomsa@example.com\n')).toBe(true);
+  });
+  it('leaves out the department and the ID line when they are not known', () => {
+    const body = buildEmailBody({ ...profile, idNumber: '', contact: '' }, { title: 'Clerk', ref: 'R1', department: '' });
+    expect(body).toContain('I hereby apply for the above-mentioned post.');
+    expect(body).not.toMatch(/ID number|Contact:/);
+  });
   it('writes the same message everywhere', () => {
     const body = buildEmailBody(profile, post);
-    expect(body).toMatch(/post of Data Analyst \(Reference: 3\/3\/1\/86\/2026\)/);
-    expect(body).toMatch(/Kind regards\nNomsa Khumalo/);
+    expect(body).toMatch(/Application for the post of Data Analyst \(Reference: 3\/3\/1\/86\/2026\)/);
+    expect(body).toMatch(/Yours faithfully\n\nNomsa Khumalo\nID number: 8001015009087\nContact: nomsa@example.com/);
     expect(buildDetailsText(profile, [{ post, fileName: 'x.pdf', subject: 'S', to: 'jobs@dept.gov.za' }])).toContain(body);
   });
   it('builds a mailto link with address, subject and a multi-line message', () => {
