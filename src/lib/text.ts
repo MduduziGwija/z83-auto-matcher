@@ -66,12 +66,15 @@ export function levelOf(text: string): number {
   const t = text.toLowerCase();
   const nqf = t.match(/nqf\s*(?:level)?\s*(\d{1,2})/);
   if (nqf) return Math.min(10, Number(nqf[1]));
+  const ncv = t.match(/\bncv\b\s*(?:level)?\s*([2-4])/);
+  if (ncv) return Number(ncv[1]);
   if (/ph\.?d|doctora/.test(t)) return 10;
+  if (/\bpgce\b/.test(t)) return 7;
   if (/master|m\.?\s?(?:sc|com|a|ed|phil|tech)\b|mba|mpa/.test(t)) return 9;
-  if (/honou?rs|postgraduate|post-graduate|pgdip|\bb\.?\s?tech|btech|\bbhons|advanced diploma/.test(t)) return /advanced diploma/.test(t) ? 7 : 8;
-  if (/bachelor|degree|\bb\.?\s?(?:sc|com|a|ed|admin|ph|proc|tech)\b|\bllb\b/.test(t)) return 7;
+  if (/honou?rs|postgraduate|post-graduate|pgdip|\bhons\b|\bbhons|advanced diploma/.test(t)) return /advanced diploma/.test(t) ? 7 : 8;
+  if (/bachelor|degree|\bb\.?\s?(?:sc|com|compt|a|ed|admin|ph|proc|tech|eng|soc\s?sci|cur|pharm|ing)\b|\bllb\b|\bmbchb\b/.test(t)) return 7;
   if (/national diploma|diploma|n\.?\s?dip|ndip/.test(t)) return 6;
-  if (/grade\s*12|matric|senior certificate|nsc\b|national senior/.test(t)) return 4;
+  if (/grade\s*12|\bstd\.?\s*10\b|standard\s*10|matric|senior certificate|nsc\b|national senior/.test(t)) return 4;
   if (/higher certificate|national certificate|certificate|n[4-6]\b/.test(t)) return 5;
   return 0;
 }

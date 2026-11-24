@@ -4,8 +4,21 @@ import { levelOf } from './text';
 
 const MON = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ');
 const MON_RE = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
-const DATE_TOKEN = `(?:${MON_RE}\\s+\\d{4}|\\d{1,2}[/.\\-]\\d{4}|\\d{4}[/.\\-]\\d{1,2}|\\d{4})`;
-const RANGE_RE = new RegExp(`(${DATE_TOKEN})\\s*(?:-|–|—|to|until|till)\\s*(${DATE_TOKEN}|present|current|date|now|today|ongoing)`, 'i');
+// A year: 2018, '18 or (only straight after a month name) 18.
+const YR = "(?:\\d{4}|['\u2019]\\d{2}|\\d{2}(?!\\d))";
+const DATE_TOKEN = `(?:${[
+  '\\d{1,2}[/.\\-]\\d{1,2}[/.\\-]\\d{4}', // 01/03/2018
+  `\\d{1,2}(?:st|nd|rd|th)?\\s+${MON_RE}[\\s,'\u2019]*${YR}`, // 1st March 2019
+  `${MON_RE}[\\s,'\u2019]*${YR}`, // Jan 2018, Jan'18, Jan 18
+  '\\d{1,2}[/.\\-]\\d{4}',
+  '\\d{4}[/.\\-]\\d{1,2}(?!\\d)',
+  '\\d{4}',
+].join('|')})`;
+const NOW_WORDS = 'present|current(?:ly)?|date|now|today|ongoing';
+const RANGE_RE = new RegExp(`(?:from\\s+)?(${DATE_TOKEN})\\s*(?:-|\u2013|\u2014|to|until|till|through|thru)\\s*(?:(?:to|till|until)\\s+)?(${DATE_TOKEN}|${NOW_WORDS})`, 'i');
+const MONTH_RANGE_RE = new RegExp(`(${MON_RE})\\s*(?:-|\u2013|\u2014|to)\\s*(${MON_RE})[\\s,'\u2019]*(\\d{4})`, 'i');
+const SINCE_RE = new RegExp(`(?:since|from)\\s+(${DATE_TOKEN})(?!\\s*(?:-|\u2013|\u2014|to|until|till))`, 'i');
+const OPEN_AFTER_RE = new RegExp(`(${DATE_TOKEN})\\s*[(\\[,]?\\s*(?:current(?:ly)?|present|ongoing|to date|till date)\\b\\)?`, 'i');
 
 const LANGS: Record<string, string> = {
   english: 'English', afrikaans: 'Afrikaans', isizulu: 'isiZulu', zulu: 'isiZulu', isixhosa: 'isiXhosa', xhosa: 'isiXhosa',
@@ -44,6 +57,11 @@ export function splitSections(lines: string[]): Sections {
     if (inline) {
       const k = sectionKey(headingText(inline[1]));
       if (k && !/\d{4}/.test(inline[1])) {
+        // Inside Education, "Qualification: BA ..." is a labelled entry, not a new heading: keep the whole line.
+        if (k === 'education' && cur === 'education') {
+          out[k]!.push(line);
+          continue;
+        }
         cur = k;
         out[k] = out[k] ?? [];
         out[k]!.push(inline[2]);
@@ -133,12 +151,21 @@ export function detectDemographics(text: string): { race: Race; gender: CvInfo['
   return { race, gender, disability };
 }
 
+const fullYear = (yy: string) => {
+  const n = Number(yy);
+  return n <= (new Date().getFullYear() % 100) + 1 ? 2000 + n : 1900 + n;
+};
+
 function parseDateTok(tok: string): { mm: string; yy: string; idx: number } | null {
-  const t = tok.trim().toLowerCase();
-  let m = t.match(new RegExp(`^(${MON_RE})\\s+(\\d{4})$`));
+  let t = tok.trim().toLowerCase().replace(/[\u2019]/g, "'");
+  let m = t.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/); // 01/03/2018 (day first, as South Africans write it)
+  if (m) return { mm: m[2].padStart(2, '0'), yy: m[3].slice(2), idx: Number(m[3]) * 12 + Number(m[2]) - 1 };
+  t = t.replace(/^\d{1,2}(?:st|nd|rd|th)?\s+(?=[a-z])/, ''); // drop a leading day: "1st March 2019"
+  m = t.match(new RegExp(`^(${MON_RE})[\\s,']*(\\d{4}|\\d{2})$`));
   if (m) {
     const mi = MON.indexOf(m[1].slice(0, 3));
-    return { mm: String(mi + 1).padStart(2, '0'), yy: m[2].slice(2), idx: Number(m[2]) * 12 + mi };
+    const year = m[2].length === 2 ? fullYear(m[2]) : Number(m[2]);
+    return { mm: String(mi + 1).padStart(2, '0'), yy: String(year).slice(2), idx: year * 12 + mi };
   }
   m = t.match(/^(\d{1,2})[/.\-](\d{4})$/);
   if (m) return { mm: m[1].padStart(2, '0'), yy: m[2].slice(2), idx: Number(m[2]) * 12 + Number(m[1]) - 1 };
@@ -166,13 +193,35 @@ const MON_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'
 const fmtIdx = (idx: number, yearOnly: boolean) => (yearOnly ? String(Math.floor(idx / 12)) : `${MON_NAMES[idx % 12]} ${Math.floor(idx / 12)}`);
 
 function parseRange(line: string): (Range & { match: string; period: string }) | null {
+  let a: ReturnType<typeof parseDateTok> = null;
+  let bTok: string | null = null;
+  let bFixed: ReturnType<typeof parseDateTok> = null;
+  let matched = '';
+  let present = false;
   const m = line.match(RANGE_RE);
-  if (!m) return null;
-  const a = parseDateTok(m[1]);
+  const mr = !m ? line.match(MONTH_RANGE_RE) : null;
+  const since = !m && !mr ? line.match(SINCE_RE) ?? line.match(OPEN_AFTER_RE) : null;
+  if (m) {
+    a = parseDateTok(m[1]);
+    bTok = m[2];
+    present = new RegExp(`^(?:${NOW_WORDS})$`, 'i').test(m[2].trim());
+    matched = m[0];
+  } else if (mr) {
+    // "Jan-Dec 2020": both months share the year.
+    a = parseDateTok(`${mr[1]} ${mr[3]}`);
+    bFixed = parseDateTok(`${mr[2]} ${mr[3]}`);
+    matched = mr[0];
+  } else if (since) {
+    // "Since March 2019" or "March 2019 (current)": still there today.
+    a = parseDateTok(since[1]);
+    present = true;
+    matched = since[0];
+  }
   if (!a) return null;
-  const present = /present|current|date|now|today|ongoing/i.test(m[2]);
   const now = new Date();
-  const b = present ? { mm: String(now.getMonth() + 1).padStart(2, '0'), yy: String(now.getFullYear()).slice(2), idx: monthIdx(now) } : parseDateTok(m[2]);
+  const b = present
+    ? { mm: String(now.getMonth() + 1).padStart(2, '0'), yy: String(now.getFullYear()).slice(2), idx: monthIdx(now) }
+    : bFixed ?? parseDateTok(bTok ?? '');
   if (!b) return null;
   if (b.idx < a.idx) return null;
   const fromYearOnly = a.mm === '';
@@ -180,8 +229,8 @@ function parseRange(line: string): (Range & { match: string; period: string }) |
   // Only years given: "2013 - 2016" is 3 years, not 4. A single year counts as about 6 months.
   let endIdx = present ? b.idx : toYearOnly ? b.idx + 11 : b.idx;
   if (fromYearOnly && toYearOnly) endIdx = a.idx + Math.max(Math.floor(b.idx / 12) - Math.floor(a.idx / 12), 0.5) * 12 - 1;
-  const period = `${fmtIdx(a.idx, fromYearOnly)} – ${present ? 'Present' : fmtIdx(b.idx, toYearOnly)}`;
-  return { startIdx: a.idx, endIdx, present, approx: fromYearOnly || toYearOnly, fromTok: a, toTok: { mm: b.mm, yy: b.yy, present }, match: m[0], period };
+  const period = `${fmtIdx(a.idx, fromYearOnly)} \u2013 ${present ? 'Present' : fmtIdx(b.idx, toYearOnly)}`;
+  return { startIdx: a.idx, endIdx, present, approx: fromYearOnly || toYearOnly, fromTok: a, toTok: { mm: b.mm, yy: b.yy, present }, match: matched, period };
 }
 
 const isBullet = (l: string) => /^\s*[•·▪●○\-*–]\s/.test(l) || l.length > 90;
@@ -195,12 +244,35 @@ function splitParts(line: string): string[] {
     .filter((x) => x.length > 1);
 }
 
-function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[] } {
+const DUR_RE = /(?:(\d+(?:[.,]\d)?)\s*\+?\s*(?:years?|yrs?)(?:\s*(?:and|&|,)?\s*(\d{1,2})\s*(?:months?|mths?|mos?))?|(\d{1,3})\s*(?:months?|mths?|mos?))\b/i;
+
+/** "2 years 3 months", "18 months", "3 yrs" in months, or null. */
+export function durationMonths(line: string): number | null {
+  const m = line.match(DUR_RE);
+  if (!m) return null;
+  if (m[3]) return Number(m[3]);
+  return Math.round(Number(m[1].replace(',', '.')) * 12) + (m[2] ? Number(m[2]) : 0);
+}
+
+function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[]; undatedMonths: number; undatedJobs: number } {
   const work: (CvWork & { idx: number })[] = [];
   const experience: ExpEntry[] = [];
+  let undatedMonths = 0;
+  let undatedJobs = 0;
+  const jobLike = (l?: string) => !!l && l.length < 120 && !isBullet(l) && (TITLE_WORDS.test(l) || ORG_WORDS.test(l));
   for (let i = 0; i < lines.length; i++) {
     const r = parseRange(lines[i]);
-    if (!r) continue;
+    if (!r) {
+      // A job given only as a length of time, with no start and end dates.
+      const line = lines[i].trim();
+      const dm = durationMonths(line);
+      const near = (i > 0 && !parseRange(lines[i - 1]) && jobLike(lines[i - 1])) || (i > 1 && !parseRange(lines[i - 2]) && jobLike(lines[i - 2]) && !jobLike(lines[i - 1]));
+      if (dm && !isBullet(line) && line.length < 120 && !/\b(?:of|with)\s+experience\b|experience\s+of\b/i.test(line) && (jobLike(line) || (/^(?:duration|period|length)\s*[:\-]/i.test(line) && near))) {
+        undatedMonths += dm;
+        undatedJobs += 1;
+      }
+      continue;
+    }
     if (levelOf(lines[i]) > 0 && !TITLE_WORDS.test(lines[i])) continue; // a study date range
     const parts = splitParts(lines[i].replace(r.match, ' '));
     // Layout B: the title/employer sit on the lines around a lone date line.
@@ -250,37 +322,89 @@ function parseWork(lines: string[]): { work: CvWork[]; experience: ExpEntry[] } 
   }
   work.sort((a, b) => b.idx - a.idx);
   experience.sort((a, b) => b.endIdx - a.endIdx);
-  return { work: work.map(({ idx: _i, ...w }) => w), experience };
+  return { work: work.map(({ idx: _i, ...w }) => w), experience, undatedMonths, undatedJobs };
 }
 
-const SCHOOL_RE = /\b(university|college|school|institute|tvet|academy|high|technikon|unisa|wits|nwu|tut|cput|uj|ukzn|ufs|up|stellenbosch|polytechnic|varsity)\b/i;
+const SCHOOL_RE = /\b(university|college|school|institute|tvet|academy|high|technikon|unisa|wits|nwu|tut|cput|uj|ukzn|ufs|up|uwc|uct|dut|vut|mut|cut|nmu|wsu|ufh|univen|unizulu|smu|spu|ump|rhodes|damelin|boston|milpark|regenesys|cti|lyceum|stellenbosch|polytechnic|varsity|fort hare|ekurhuleni|tshwane)\b/i;
 
-function parseQuals(lines: string[]): CvQualification[] {
+const QUAL_LABEL = /^(?:qualification|degree|diploma|certificate|programme|program|course|field of study)\s*(?:name|obtained|title)?\s*[:\-]\s*(.+)$/i;
+const SCHOOL_LABEL = /^(?:institution|institute|university|college|school|studied at|awarded by|provider)\s*(?:name)?\s*[:\-]\s*(.+)$/i;
+const YEAR_LABEL = /^(?:year(?:\s+(?:completed|obtained|of completion|awarded|graduated))?|completed|graduated|date(?:\s+completed)?|completion(?:\s+date)?|period)\s*[:\-]\s*(.+)$/i;
+const YEAR_RE = /\b(19[6-9]\d|20[0-3]\d)\b/g;
+const DURATION_IN_TEXT = /\(?\b\d+(?:[.,]\d)?[\s-]*(?:years?|yrs?)\b(?:\s*(?:and|&)?\s*\d+\s*(?:months?|mths?))?\)?/gi;
+const COMPLETION_WORDS = /\(?\b(?:completed|graduated|obtained|awarded|expected(?:\s+in)?|year\s+completed|date\s+completed)\b\s*[:\-]?\s*\)?/gi;
+
+/** Trims separators from the ends of a piece, and a bracket only when it has no partner. */
+function trimSeg(x: string): string {
+  let t = x.replace(/^[\s,:;\-\u2013\u2014|]+|[\s,:;\-\u2013\u2014|]+$/g, '');
+  if ((t.match(/\(/g) ?? []).length > (t.match(/\)/g) ?? []).length) t = t.replace(/\s*\(\s*$/, '').replace(/^\(\s*/, '');
+  if ((t.match(/\)/g) ?? []).length > (t.match(/\(/g) ?? []).length) t = t.replace(/^\s*\)\s*/, '').replace(/\s*\)$/, '');
+  return t.trim();
+}
+
+function tidyQual(raw: string): { text: string; school: string } {
+  let text = raw.replace(YEAR_RE, ' ').replace(DURATION_IN_TEXT, ' ').replace(COMPLETION_WORDS, ' ').replace(/\(\s*[\u2013\u2014\-,]*\s*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  // Split into "name, school" pieces and take the school out by what it looks like.
+  const segs = text.split(/\s[|\u2013\u2014-]\s|,\s+|\s\|\s?/).map(trimSeg).filter(Boolean);
+  let school = '';
+  if (segs.length > 1) {
+    const at = segs.findIndex((x, i) => i > 0 && SCHOOL_RE.test(x) && !levelOf(x));
+    if (at > 0) {
+      school = segs[at];
+      segs.splice(at, 1);
+    }
+  }
+  text = segs.join(', ');
+  return { text, school };
+}
+
+function parseQuals(allLines: string[]): CvQualification[] {
   const out: CvQualification[] = [];
+  const lines: string[] = [];
+  // Labelled blocks: "Qualification: BA ...", "Institution: ...", "Year Completed: 2022".
+  let block: CvQualification | null = null;
+  for (const raw of allLines) {
+    const l = raw.trim();
+    const q = l.match(QUAL_LABEL);
+    if (q) {
+      const t = tidyQual(q[1]);
+      block = { text: t.text.slice(0, 90), school: t.school.slice(0, 70), level: levelOf(q[1]) || 5, year: (q[1].match(YEAR_RE) ?? []).pop() ?? '' };
+      if (block.text.length >= 3) out.push(block);
+      continue;
+    }
+    if (block) {
+      const sc = l.match(SCHOOL_LABEL);
+      const yr = l.match(YEAR_LABEL);
+      if (sc) {
+        block.school = tidyQual(sc[1]).text.slice(0, 70);
+        continue;
+      }
+      if (yr) {
+        block.year = (yr[1].match(YEAR_RE) ?? []).pop() ?? block.year;
+        continue;
+      }
+      if (l) block = null;
+    }
+    lines.push(raw);
+  }
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i].trim();
     if (!l || (isBullet(l) && l.length > 90)) continue;
     if (/\b(modules?|subjects?|courses? (?:include|covered))\b\s*:?/i.test(l)) continue; // lists of modules are not qualifications
+    if (/^(?:duration|period|length)\s*[:\-]/i.test(l)) continue;
     const lvl = levelOf(l);
-    if (!lvl && !/\b(diploma|degree|certificate|matric|grade 12|honou?rs|masters?|bachelor)\b/i.test(l)) continue;
-    if (TITLE_WORDS.test(l) && !/diploma|degree|certificate|bachelor|honou?rs|master/i.test(l)) continue;
+    if (!lvl && !/\b(diploma|degree|certificate|matric|grade 12|honou?rs|masters?|bachelor|pgce|std\s*10)\b/i.test(l)) continue;
+    if (TITLE_WORDS.test(l) && !/diploma|degree|certificate|bachelor|honou?rs|master|pgce/i.test(l)) continue;
     const neighbours = [lines[i - 1], lines[i + 1], lines[i + 2]].filter(Boolean).map((x) => x.trim());
-    const years = [l, ...neighbours.slice(0, 2)].join(' ').match(/\b(19[6-9]\d|20[0-3]\d)\b/g);
+    const years = [l, ...neighbours.slice(0, 2)].join(' ').match(YEAR_RE);
     // Look forward first: the institution usually follows its qualification, and the line before is often the previous qualification's institution.
     const after = [lines[i + 1], lines[i + 2]].filter(Boolean).map((x) => x.trim());
     const prev = lines[i - 1]?.trim() ?? '';
     const prevIsQual = !prev || levelOf(prev) > 0 || SCHOOL_RE.test(prev) && /\b(19|20)\d{2}\b/.test(prev);
-    let school = l.match(SCHOOL_RE) ? '' : after.find((n) => SCHOOL_RE.test(n) && n.length < 80 && !levelOf(n)) ?? (!prevIsQual && SCHOOL_RE.test(prev) ? prev : '');
-    school = school.replace(/\b(19[6-9]\d|20[0-3]\d)\b/g, '').replace(/[,\-–\s]+$/g, '').trim();
-    let text = l.replace(/\b(19[6-9]\d|20[0-3]\d)\b/g, '').replace(/[()|,\-–]+\s*$/g, '').replace(/^\W+/, '').trim();
-    const inline = text.split(/\s[|–—-]\s|,\s(?=(?:university|college|school))/i);
-    if (inline.length > 1) {
-      const sch = inline.find((x) => SCHOOL_RE.test(x));
-      if (sch && !school) {
-        school = sch.trim();
-        text = inline.filter((x) => x !== sch).join(' - ').trim();
-      }
-    }
+    const t = tidyQual(l);
+    let school = t.school || (SCHOOL_RE.test(l) ? '' : after.find((n) => SCHOOL_RE.test(n) && n.length < 80 && !levelOf(n)) ?? (!prevIsQual && SCHOOL_RE.test(prev) ? prev : ''));
+    school = school.replace(YEAR_RE, '').replace(/[,\-\u2013\s]+$/g, '').trim();
+    const text = t.text;
     if (text.length < 4) continue;
     out.push({ text: text.slice(0, 90), school: school.slice(0, 70), level: lvl || 5, year: years ? years[years.length - 1] : '' });
   }
@@ -456,11 +580,11 @@ export function parseCv(rawText: string): CvInfo {
   const nationality = text.match(/nationality\s*[:\-]\s*([A-Za-z ]{3,25})/i)?.[1]?.trim() ?? (idCand ? 'South African' : '');
 
   const expLines = sec.experience ?? lines.filter((l) => !(levelOf(l) > 0 && !TITLE_WORDS.test(l)));
-  const { work, experience } = parseWork(expLines);
+  const { work, experience, undatedMonths, undatedJobs } = parseWork(expLines);
   const totals = experience.length ? experienceTotals(experience) : null;
   const total = totals ? totals.totalMonths / 12 : null;
   const stated = text.match(/(\d{1,2})\+?\s*years?(?:['’]s)?\s*(?:of\s+)?(?:relevant\s+|working\s+|professional\s+)?experience/i);
-  const totalYears = total ?? (stated ? Number(stated[1]) : null);
+  const totalYears = total ?? (undatedMonths > 0 ? undatedMonths / 12 : stated ? Number(stated[1]) : null);
 
   const qualifications = parseQuals(sec.education ?? lines);
   const languages = parseLanguages(sec.languages, lines);
@@ -475,7 +599,8 @@ export function parseCv(rawText: string): CvInfo {
   if (!email) gaps.push('We could not find your own email address on the CV. Add it near your name, so the Department can reach you.');
   if (!languages.length) gaps.push('We could not find a languages section on your CV. The Z83 asks how well you speak, read and write official languages.');
   if (!qualifications.length) gaps.push('We could not find your qualifications. Check your CV has an "Education" or "Qualifications" heading.');
-  if (!work.length) gaps.push('We could not find dated work experience (for example "Jan 2018 - Present").');
+  if (undatedJobs > 0) gaps.push(`We found ${undatedJobs === 1 ? 'a job' : `${undatedJobs} jobs`} written as a length of time only (like "2 years"). The Z83 needs start and end dates, so please add start and end dates (for example "Mar 2018 - Dec 2020") on your CV, or type them in below.`);
+  else if (!work.length) gaps.push('We could not find dated work experience (for example "Jan 2018 - Present").');
   if (!hasReferences) {
     const onRequest = /references?\b[^\n]{0,40}\bon request|referees?\b[^\n]{0,40}\bon request/i.test(full);
     gaps.push(onRequest
